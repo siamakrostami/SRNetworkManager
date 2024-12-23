@@ -64,7 +64,7 @@ public struct DownloadTask: Identifiable, Codable, Sendable {
     /// Source URL for the download
     public let url: URL
     /// Target filename for the downloaded file
-    public let fileName: String
+    public var fileName: String
     /// Priority level for queue processing
     public let priority: DownloadPriority
     /// Current state of the download

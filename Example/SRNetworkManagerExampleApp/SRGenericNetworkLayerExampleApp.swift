@@ -11,7 +11,7 @@ import SwiftUI
 struct SRGenericNetworkLayerExampleApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            DownloadDemoView()
         }
     }
 }

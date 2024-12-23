@@ -7,8 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		011108B52D109AF400B9C858 /* SRNetworkManager in Frameworks */ = {isa = PBXBuildFile; productRef = 011108B42D109AF400B9C858 /* SRNetworkManager */; };
 		D50FF5E02D10478B008AF330 /* SRNetworkManager in Frameworks */ = {isa = PBXBuildFile; productRef = D50FF5DF2D10478B008AF330 /* SRNetworkManager */; };
+		D58538742D16AC9800B5C8CA /* SRNetworkManager in Frameworks */ = {isa = PBXBuildFile; productRef = D58538732D16AC9800B5C8CA /* SRNetworkManager */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -28,7 +28,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				011108B52D109AF400B9C858 /* SRNetworkManager in Frameworks */,
+				D58538742D16AC9800B5C8CA /* SRNetworkManager in Frameworks */,
 				D50FF5E02D10478B008AF330 /* SRNetworkManager in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -73,7 +73,7 @@
 			name = SRNetworkManagerExampleApp;
 			packageProductDependencies = (
 				D50FF5DF2D10478B008AF330 /* SRNetworkManager */,
-				011108B42D109AF400B9C858 /* SRNetworkManager */,
+				D58538732D16AC9800B5C8CA /* SRNetworkManager */,
 			);
 			productName = SRGenericNetworkLayerExampleApp;
 			productReference = 017913072C9E03770011B237 /* SRNetworkManagerExampleApp.app */;
@@ -104,7 +104,7 @@
 			mainGroup = 017912FE2C9E03770011B237;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				011108B32D109AF400B9C858 /* XCRemoteSwiftPackageReference "SRNetworkManager" */,
+				D58538722D16AC9800B5C8CA /* XCLocalSwiftPackageReference "../../SRNetworkManager" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 017913082C9E03770011B237 /* Products */;
@@ -337,24 +337,19 @@
 		};
 /* End XCConfigurationList section */
 
-/* Begin XCRemoteSwiftPackageReference section */
-		011108B32D109AF400B9C858 /* XCRemoteSwiftPackageReference "SRNetworkManager" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/siamakrostami/SRNetworkManager";
-			requirement = {
-				kind = upToNextMinorVersion;
-				minimumVersion = 1.0.17;
-			};
+/* Begin XCLocalSwiftPackageReference section */
+		D58538722D16AC9800B5C8CA /* XCLocalSwiftPackageReference "../../SRNetworkManager" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../SRNetworkManager;
 		};
-/* End XCRemoteSwiftPackageReference section */
+/* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		011108B42D109AF400B9C858 /* SRNetworkManager */ = {
+		D50FF5DF2D10478B008AF330 /* SRNetworkManager */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 011108B32D109AF400B9C858 /* XCRemoteSwiftPackageReference "SRNetworkManager" */;
 			productName = SRNetworkManager;
 		};
-		D50FF5DF2D10478B008AF330 /* SRNetworkManager */ = {
+		D58538732D16AC9800B5C8CA /* SRNetworkManager */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SRNetworkManager;
 		};

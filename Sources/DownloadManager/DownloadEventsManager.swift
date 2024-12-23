@@ -19,131 +19,188 @@ public protocol DownloadEventManaging: Sendable {
 /// This actor provides thread-safe event emission and state tracking
 /// for all download operations, supporting both individual task
 /// monitoring and global event observation.
+import Foundation
+import Combine
+
 public final class DownloadEventsManager: DownloadEventManaging, @unchecked Sendable {
-    // MARK: - Properties
+        // MARK: - Properties
     
-    /// Subject for broadcasting download events
     private let eventSubject: PassthroughSubject<DownloadEvent, Never>
-    
-    /// Subject for broadcasting task state updates
     private let taskSubject: CurrentValueSubject<[DownloadTask], Never>
-    
-    /// Internal storage of current tasks
     private var tasks: [UUID: DownloadTask]
     
-    // MARK: - Initialization
+        // Serial queue for synchronization
+    private let queue: DispatchQueue
+    
+        // MARK: - Initialization
     
     public init() {
         self.eventSubject = PassthroughSubject<DownloadEvent, Never>()
         self.taskSubject = CurrentValueSubject<[DownloadTask], Never>([])
         self.tasks = [:]
+        self.queue = DispatchQueue(label: "com.SRNetworkManager.eventsManager")
     }
     
-    // MARK: - Public Interface
+        // MARK: - Public Interface
     
-    /// Publisher for all download-related events
-    nonisolated public var eventsPublisher: AnyPublisher<DownloadEvent, Never> {
+    public var eventsPublisher: AnyPublisher<DownloadEvent, Never> {
         eventSubject.eraseToAnyPublisher()
     }
     
-    /// Publisher for task state updates
-    nonisolated public var tasksPublisher: AnyPublisher<[DownloadTask], Never> {
+    public var tasksPublisher: AnyPublisher<[DownloadTask], Never> {
         taskSubject.eraseToAnyPublisher()
     }
     
-    /// Emits a progress update event
-    /// - Parameters:
-    ///   - taskId: ID of the task
-    ///   - progress: Current progress (0.0 to 1.0)
-    ///   - speed: Current download speed in bytes/second
     public func emitProgress(taskId: UUID, progress: Double, speed: Double) async {
-        eventSubject.send(.progress(taskId, progress, speed))
+        queue.async { [weak self] in
+            self?.eventSubject.send(.progress(taskId, progress, speed))
+        }
     }
     
-    /// Emits a state change event
-    /// - Parameters:
-    ///   - taskId: ID of the task
-    ///   - state: New state
     public func emitStateChange(taskId: UUID, state: DownloadState) async {
-        eventSubject.send(.stateChange(taskId, state))
+        queue.async { [weak self] in
+            self?.eventSubject.send(.stateChange(taskId, state))
+        }
     }
     
-    /// Emits an error event
-    /// - Parameters:
-    ///   - taskId: ID of the task
-    ///   - error: Error message
     public func emitError(taskId: UUID, error: String) async {
-        eventSubject.send(.error(taskId, error))
+        queue.async { [weak self] in
+            self?.eventSubject.send(.error(taskId, error))
+        }
     }
     
-    /// Updates task state and broadcasts change
-    /// - Parameter task: Updated task
     public func updateTask(_ task: DownloadTask) async {
-        tasks[task.id] = task
-        taskSubject.send(Array(tasks.values))
+        await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                guard let self = self else {
+                    continuation.resume()
+                    return
+                }
+                self.tasks[task.id] = task
+                self.taskSubject.send(Array(self.tasks.values))
+                continuation.resume()
+            }
+        }
     }
     
-    /// Removes task and broadcasts update
-    /// - Parameter taskId: ID of task to remove
     public func removeTask(_ taskId: UUID) async {
-        tasks.removeValue(forKey: taskId)
-        taskSubject.send(Array(tasks.values))
+        await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                guard let self = self else {
+                    continuation.resume()
+                    return
+                }
+                self.tasks.removeValue(forKey: taskId)
+                self.taskSubject.send(Array(self.tasks.values))
+                continuation.resume()
+            }
+        }
     }
     
-    /// Returns all current tasks
-    /// - Returns: Array of all tasks
     public func getAllTasks() async -> [DownloadTask] {
-        Array(tasks.values)
+        await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                guard let self = self else {
+                    continuation.resume(returning: [])
+                    return
+                }
+                continuation.resume(returning: Array(self.tasks.values))
+            }
+        }
     }
     
-    // MARK: - Helper Methods
+    public func getAllTasks() -> [DownloadTask] {
+        queue.sync {
+            return Array(self.tasks.values)
+        }
+    }
     
-    /// Updates multiple tasks at once
-    /// - Parameter tasks: Array of tasks to update
+        // MARK: - Helper Methods
+    
     public func updateTasks(_ tasks: [DownloadTask]) async {
-        for task in tasks {
-            self.tasks[task.id] = task
+        await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                guard let self = self else {
+                    continuation.resume()
+                    return
+                }
+                for task in tasks {
+                    self.tasks[task.id] = task
+                }
+                self.taskSubject.send(Array(self.tasks.values))
+                continuation.resume()
+            }
         }
-        taskSubject.send(Array(self.tasks.values))
     }
     
-    /// Removes multiple tasks at once
-    /// - Parameter taskIds: Array of task IDs to remove
     public func removeTasks(_ taskIds: [UUID]) async {
-        for id in taskIds {
-            tasks.removeValue(forKey: id)
+        await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                guard let self = self else {
+                    continuation.resume()
+                    return
+                }
+                for id in taskIds {
+                    self.tasks.removeValue(forKey: id)
+                }
+                self.taskSubject.send(Array(self.tasks.values))
+                continuation.resume()
+            }
         }
-        taskSubject.send(Array(tasks.values))
     }
     
-    /// Clears all tasks
     public func clearAllTasks() async {
-        tasks.removeAll()
-        taskSubject.send([])
+        await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                guard let self = self else {
+                    continuation.resume()
+                    return
+                }
+                self.tasks.removeAll()
+                self.taskSubject.send([])
+                continuation.resume()
+            }
+        }
     }
 }
 
-// MARK: - Helper Extensions
+    // MARK: - Helper Extensions
 
 extension DownloadEventsManager {
-    /// Filters tasks by state
-    /// - Parameter state: The state to filter by
-    /// - Returns: Array of tasks in the specified state
     public func getTasks(inState state: DownloadState) async -> [DownloadTask] {
-        Array(tasks.values.filter { $0.state == state })
+        await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                guard let self = self else {
+                    continuation.resume(returning: [])
+                    return
+                }
+                let filteredTasks = self.tasks.values.filter { $0.state == state }
+                continuation.resume(returning: Array(filteredTasks))
+            }
+        }
     }
     
-    /// Gets a specific task by ID
-    /// - Parameter id: The task ID to look for
-    /// - Returns: The task if found, nil otherwise
     public func getTask(withId id: UUID) async -> DownloadTask? {
-        tasks[id]
+        await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                guard let self = self else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                continuation.resume(returning: self.tasks[id])
+            }
+        }
     }
     
-    /// Checks if a task exists
-    /// - Parameter id: The task ID to check
-    /// - Returns: True if the task exists
     public func hasTask(withId id: UUID) async -> Bool {
-        tasks[id] != nil
+        await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                guard let self = self else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                continuation.resume(returning: self.tasks[id] != nil)
+            }
+        }
     }
 }

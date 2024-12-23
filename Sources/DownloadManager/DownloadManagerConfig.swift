@@ -40,14 +40,18 @@ public struct DownloadManagerConfig: Sendable {
     
     /// Default configuration with reasonable values
     public static var `default`: DownloadManagerConfig {
-        DownloadManagerConfig(
+        let fileManager = FileManager.default
+        let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let downloadsURL = documentsURL.appendingPathComponent("Downloads", isDirectory: true)
+        
+        return DownloadManagerConfig(
             maxConcurrentDownloads: 3,
             maxQueueSize: 100,
             maxRetryAttempts: 3,
             allowsCellularAccess: true,
-            downloadDirectory: FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0],
-            temporaryDirectory: FileManager.default.temporaryDirectory,
-            minFreeDiskSpace: 1024 * 1024 * 1024, // 1GB
+            downloadDirectory: downloadsURL,
+            temporaryDirectory: fileManager.temporaryDirectory,
+            minFreeDiskSpace: 1024 * 1024 * 1024,
             timeoutInterval: 60
         )
     }
@@ -76,8 +80,16 @@ public struct DownloadManagerConfig: Sendable {
         self.maxQueueSize = maxQueueSize
         self.maxRetryAttempts = maxRetryAttempts
         self.allowsCellularAccess = allowsCellularAccess
-        self.downloadDirectory = downloadDirectory ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        self.temporaryDirectory = temporaryDirectory ?? FileManager.default.temporaryDirectory
+        
+            // Set up download directory
+        let fileManager = FileManager.default
+        let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        self.downloadDirectory = downloadDirectory ?? documentsURL.appendingPathComponent("Downloads", isDirectory: true)
+        
+            // Set up temporary directory
+        self.temporaryDirectory = temporaryDirectory ?? fileManager.temporaryDirectory
+            .appendingPathComponent("SRDownloads", isDirectory: true)
+        
         self.minFreeDiskSpace = minFreeDiskSpace
         self.timeoutInterval = timeoutInterval
     }

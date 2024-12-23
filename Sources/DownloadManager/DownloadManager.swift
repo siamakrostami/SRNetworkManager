@@ -36,10 +36,10 @@ public final class DownloadManager: @unchecked Sendable {
     let eventsManager: DownloadEventsManager
     
     /// Background URLSession for download tasks
-    private let backgroundSession: URLSession
+    private let session: URLSession
     
     /// Currently active download tasks
-    private var activeDownloads: [UUID: URLSessionDownloadTask] = [:]
+    var activeDownloads: [UUID: URLSessionDownloadTask] = [:]
     
     /// Network path monitor for handling connectivity changes
     private let networkMonitor = NWPathMonitor()
@@ -48,6 +48,7 @@ public final class DownloadManager: @unchecked Sendable {
     private var cancellables = Set<AnyCancellable>()
     
     private let sessionDelegate: SessionDelegate?
+    private let useBackgroundSession: Bool
     
     // MARK: - Public Interface
     
@@ -59,21 +60,28 @@ public final class DownloadManager: @unchecked Sendable {
     /// Creates a new download manager instance.
     /// - Parameter configuration: Custom configuration for the download manager
     /// - Throws: Error if initialization fails
-    public init(configuration: DownloadManagerConfig = .default) async throws {
+    public init(configuration: DownloadManagerConfig = .default, useBackgroundSession: Bool = false) async throws {
+        self.useBackgroundSession = useBackgroundSession
         self.config = configuration
         self.queue = DownloadQueue(maxQueueSize: configuration.maxQueueSize)
-        self.storage = try DownloadStorage()
+        self.storage = try await DownloadStorage()
         self.eventsManager = DownloadEventsManager()
         self.sessionDelegate = SessionDelegate()
         // Configure background session
-        let sessionConfig = URLSessionConfiguration.background(withIdentifier: "com.SRNetworkManager.downloadmanager.background")
-        sessionConfig.isDiscretionary = false
-        sessionConfig.sessionSendsLaunchEvents = true
+        let sessionConfig: URLSessionConfiguration
+        if useBackgroundSession {
+            sessionConfig = URLSessionConfiguration.background(withIdentifier: "com.SRNetworkManager.downloadmanager.background")
+            sessionConfig.isDiscretionary = false
+            sessionConfig.sessionSendsLaunchEvents = true
+        } else {
+            sessionConfig = URLSessionConfiguration.default
+        }
+        
         sessionConfig.allowsCellularAccess = configuration.allowsCellularAccess
         sessionConfig.timeoutIntervalForRequest = configuration.timeoutInterval
         sessionConfig.timeoutIntervalForResource = configuration.timeoutInterval
         
-        self.backgroundSession = URLSession(
+        self.session = URLSession(
             configuration: sessionConfig,
             delegate: sessionDelegate,
             delegateQueue: nil
@@ -117,7 +125,7 @@ public final class DownloadManager: @unchecked Sendable {
         let task = DownloadTask(url: url, fileName: fileName, priority: priority)
         
         // Save and queue task
-        try await storage.saveTask(task)
+        try await storage.createDirectory(for: task)
         await queue.enqueue(task)
         await eventsManager.updateTask(task)
         
@@ -143,7 +151,6 @@ public final class DownloadManager: @unchecked Sendable {
         task?.state = .paused
         
         if let task = task {
-            try await storage.updateTask(task)
             await eventsManager.updateTask(task)
             await eventsManager.emitStateChange(taskId: id, state: .paused)
         }
@@ -159,8 +166,6 @@ public final class DownloadManager: @unchecked Sendable {
            task.state == .paused {
             var updatedTask = task
             updatedTask.state = .queued
-            
-            try await storage.updateTask(updatedTask)
             await queue.enqueue(updatedTask)
             await eventsManager.updateTask(updatedTask)
             await eventsManager.emitStateChange(taskId: id, state: .queued)
@@ -178,11 +183,9 @@ public final class DownloadManager: @unchecked Sendable {
         
         if var task = await eventsManager.getAllTasks().first(where: { $0.id == id }) {
             task.state = .cancelled
-            try await storage.updateTask(task)
+            try await storage.removeTask(task.id)
             await eventsManager.updateTask(task)
             await eventsManager.emitStateChange(taskId: id, state: .cancelled)
-            
-            await cleanupTemporaryFiles(for: task)
         }
     }
     
@@ -219,19 +222,14 @@ public final class DownloadManager: @unchecked Sendable {
         var updatedTask = task
         updatedTask.state = .downloading
         
-        do {
-            try await storage.updateTask(updatedTask)
-            await eventsManager.updateTask(updatedTask)
-            await eventsManager.emitStateChange(taskId: task.id, state: .downloading)
-            
-            let downloadTask = backgroundSession.downloadTask(with: task.url)
-            downloadTask.priority = task.priority.urlSessionPriority
-            activeDownloads[task.id] = downloadTask
-            downloadTask.resume()
-            
-        } catch {
-            await handleDownloadError(task: task, error: error)
-        }
+        await eventsManager.updateTask(updatedTask)
+        await eventsManager.emitStateChange(taskId: task.id, state: .downloading)
+        
+        
+        let downloadTask = session.downloadTask(with: task.url)
+        downloadTask.priority = task.priority.urlSessionPriority
+        activeDownloads[task.id] = downloadTask
+        downloadTask.resume()
     }
     
     private func validateDownload(url: URL) async -> Bool {
@@ -251,15 +249,15 @@ public final class DownloadManager: @unchecked Sendable {
         updatedTask.state = .failed
         updatedTask.error = error.localizedDescription
         
-        try? await storage.updateTask(updatedTask)
         await eventsManager.updateTask(updatedTask)
         await eventsManager.emitError(taskId: task.id, error: error.localizedDescription)
         await eventsManager.emitStateChange(taskId: task.id, state: .failed)
     }
     
+
+    
     private func cleanupTemporaryFiles(for task: DownloadTask) async {
-        let tempURL = config.temporaryDirectory.appendingPathComponent(task.fileName)
-        try? FileManager.default.removeItem(at: tempURL)
+        try? await storage.removeTask(task.id)
     }
     
     private func setupNetworkMonitoring() {
@@ -287,31 +285,33 @@ public final class DownloadManager: @unchecked Sendable {
     }
     
     private func restoreSession() async throws {
-        let savedTasks = try await storage.loadTasks()
-        
-        for var task in savedTasks {
-            switch task.state {
-            case .downloading, .queued:
-                task.state = .queued
-                await queue.enqueue(task)
-                await eventsManager.updateTask(task)
-                
-            case .paused:
-                await queue.enqueue(task)
-                await eventsManager.updateTask(task)
-                
-            case .completed:
-                let fileURL = config.downloadDirectory.appendingPathComponent(task.fileName)
-                if FileManager.default.fileExists(atPath: fileURL.path) {
-                    await eventsManager.updateTask(task)
-                } else {
+            // Check existing directories
+        let tasks = await eventsManager.getAllTasks()
+        for var task in tasks {
+            if try await storage.fileExists(for: task) {
+                switch task.state {
+                    case .downloading, .queued:
+                        task.state = .queued
+                        await queue.enqueue(task)
+                        await eventsManager.updateTask(task)
+                        
+                    case .paused:
+                        await queue.enqueue(task)
+                        await eventsManager.updateTask(task)
+                        
+                    case .completed:
+                        await eventsManager.updateTask(task)
+                        
+                    case .failed, .cancelled:
+                        try await storage.removeTask(task.id)
+                }
+            } else {
+                    // No file exists, reset state
+                if task.state == .completed {
                     task.state = .queued
                     await queue.enqueue(task)
                     await eventsManager.updateTask(task)
                 }
-                
-            case .failed, .cancelled:
-                try await storage.removeTask(task.id)
             }
         }
     }
@@ -319,8 +319,9 @@ public final class DownloadManager: @unchecked Sendable {
 
 // MARK: - URLSession Delegate
 
-private final class SessionDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
-    weak var manager: DownloadManager?
+private final class SessionDelegate: NSObject, URLSessionDownloadDelegate, URLSessionDataDelegate, @unchecked Sendable {
+    private weak var manager: DownloadManager?
+    private var receivedData: [UUID: Data] = [:] // For non-background downloads
     
     func setManager(_ manager: DownloadManager) {
         self.manager = manager
@@ -331,7 +332,12 @@ private final class SessionDelegate: NSObject, URLSessionDownloadDelegate, @unch
         downloadTask: URLSessionDownloadTask,
         didFinishDownloadingTo location: URL
     ) {
-        // Handle completed download
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+        let temporaryCopyURL = temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        
+        try? FileManager.default.copyItem(at: location, to: temporaryCopyURL)
+        
+        debugPrint("Downloaded file to \(temporaryCopyURL.path)")
         Task {
             guard let manager = manager,
                   let url = downloadTask.originalRequest?.url,
@@ -339,18 +345,63 @@ private final class SessionDelegate: NSObject, URLSessionDownloadDelegate, @unch
             else { return }
             
             do {
-                let destinationURL = manager.config.downloadDirectory.appendingPathComponent(task.fileName)
-                try FileManager.default.moveItem(at: location, to: destinationURL)
+                
+                let fileData = try Data(contentsOf: location)
+                let mimeType = MimeTypeDetector.detectMimeType(from: fileData) ??
+                MimeTypeDetector.detectMimeType(fromExtension: url.pathExtension)
+                
+                let fileName = task.fileName + (task.fileName.contains(".") ? "" : ".\(mimeType?.ext ?? "download")")
                 
                 var updatedTask = task
+                updatedTask.fileName = fileName
+                
+                try await manager.storage.saveFile(at: temporaryCopyURL, for: updatedTask)
+                try? FileManager.default.removeItem(at: temporaryCopyURL)
+                
                 updatedTask.state = .completed
-                try await manager.storage.updateTask(updatedTask)
                 await manager.eventsManager.updateTask(updatedTask)
                 await manager.eventsManager.emitStateChange(taskId: task.id, state: .completed)
                 
             } catch {
+                print("File error: \(error)")
                 await manager.handleDownloadError(task: task, error: error)
             }
+        }
+    }
+
+    
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didCompleteWithError error: Error?) {
+        guard let url = dataTask.originalRequest?.url,
+              let taskId = manager?.activeDownloads.first(where: { $0.value == dataTask })?.key else { return }
+        
+        Task {
+            if let error = error {
+                if let task = await manager?.eventsManager.getAllTasks().first(where: { $0.id == taskId }) {
+                    await manager?.handleDownloadError(task: task, error: error)
+                }
+            } else if let receivedData = receivedData[taskId],
+                      let task = await manager?.eventsManager.getAllTasks().first(where: { $0.id == taskId }) {
+                do {
+                    let temporaryURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+                    try receivedData.write(to: temporaryURL)
+                    
+                    var updatedTask = task
+                    let mimeType = MimeTypeDetector.detectMimeType(from: receivedData) ??
+                    MimeTypeDetector.detectMimeType(fromExtension: url.pathExtension)
+                    
+                    updatedTask.fileName = task.fileName + (task.fileName.contains(".") ? "" : ".\(mimeType?.ext ?? "download")")
+                    
+                    try await manager?.storage.saveFile(at: temporaryURL, for: updatedTask)
+                    try? FileManager.default.removeItem(at: temporaryURL)
+                    
+                    updatedTask.state = .completed
+                    await manager?.eventsManager.updateTask(updatedTask)
+                    await manager?.eventsManager.emitStateChange(taskId: taskId, state: .completed)
+                } catch {
+                    await manager?.handleDownloadError(task: task, error: error)
+                }
+            }
+            self.receivedData.removeValue(forKey: taskId)
         }
     }
     
@@ -361,7 +412,6 @@ private final class SessionDelegate: NSObject, URLSessionDownloadDelegate, @unch
         totalBytesWritten: Int64,
         totalBytesExpectedToWrite: Int64
     ) {
-        // Handle download progress
         Task {
             guard let manager = manager,
                   let url = downloadTask.originalRequest?.url,
@@ -369,12 +419,12 @@ private final class SessionDelegate: NSObject, URLSessionDownloadDelegate, @unch
             else { return }
             
             let progress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
-            let speed = Double(bytesWritten)  // bytes per second
-            
+            let speed = Double(bytesWritten)
             await manager.eventsManager.emitProgress(taskId: task.id, progress: progress, speed: speed)
         }
     }
 }
+
 
 /// Combine extensions for DownloadManager providing reactive interfaces
 extension DownloadManager {

@@ -73,97 +73,7 @@ public final class DownloadQueue: DownloadQueueManaging, @unchecked Sendable {
     }
 }
 
-/// Implementation of persistent storage for download tasks.
-///
-/// This actor provides thread-safe access to persistent storage
-/// operations for download tasks using JSON serialization.
-public final class DownloadStorage: DownloadStorageManaging, @unchecked Sendable {
-    /// FileManager instance for file operations
-    private let fileManager: FileManager
-    /// URL where download tasks are persisted
-    private let storageURL: URL
-    /// Internal cache of tasks
-    private var tasksCache: [DownloadTask]?
-    
-    /// Creates a new storage manager.
-    /// - Throws: Error if storage location cannot be accessed
-    public init() throws {
-        self.fileManager = FileManager.default
-        self.storageURL = try fileManager
-            .url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-            .appendingPathComponent("downloads.json")
-    }
-    
-    /// Saves a download task to persistent storage.
-    /// - Parameter task: The task to be saved
-    /// - Throws: Error if saving fails
-    public func saveTask(_ task: DownloadTask) async throws {
-        var tasks = try await loadTasks()
-        tasks.append(task)
-        try await saveTasks(tasks)
-    }
-    
-    /// Loads all saved download tasks from persistent storage.
-    /// - Returns: Array of saved download tasks
-    /// - Throws: Error if loading fails
-    public func loadTasks() async throws -> [DownloadTask] {
-        // Return cached tasks if available
-        if let cached = tasksCache {
-            return cached
-        }
-        
-        // Load from disk if no cache exists
-        guard fileManager.fileExists(atPath: storageURL.path) else {
-            tasksCache = []
-            return []
-        }
-        
-        // Read and decode tasks
-        return try await Task.detached(priority: .userInitiated) {
-            let data = try Data(contentsOf: self.storageURL)
-            let tasks = try JSONDecoder().decode([DownloadTask].self, from: data)
-            self.tasksCache = tasks
-            return tasks
-        }.value
-    }
-    
-    /// Removes a specific task from persistent storage.
-    /// - Parameter taskId: ID of the task to remove
-    /// - Throws: Error if removal fails
-    public func removeTask(_ taskId: UUID) async throws {
-        var tasks = try await loadTasks()
-        tasks.removeAll { $0.id == taskId }
-        try await saveTasks(tasks)
-    }
-    
-    /// Updates an existing task in persistent storage.
-    /// - Parameter task: The task with updated information
-    /// - Throws: Error if update fails
-    public func updateTask(_ task: DownloadTask) async throws {
-        var tasks = try await loadTasks()
-        if let index = tasks.firstIndex(where: { $0.id == task.id }) {
-            tasks[index] = task
-            try await saveTasks(tasks)
-        }
-    }
-    
-    /// Removes all tasks from persistent storage.
-    /// - Throws: Error if operation fails
-    public func clearAll() async throws {
-        try await saveTasks([])
-    }
-    
-    /// Internal helper to save tasks to disk.
-    /// - Parameter tasks: Array of tasks to save
-    /// - Throws: Error if serialization or writing fails
-    private func saveTasks(_ tasks: [DownloadTask]) async throws {
-        try await Task.detached(priority: .utility) {
-            let data = try JSONEncoder().encode(tasks)
-            try data.write(to: self.storageURL)
-            self.tasksCache = tasks
-        }.value
-    }
-}
+
 
 // MARK: - Protocols
 
@@ -181,18 +91,4 @@ public protocol DownloadQueueManaging: Sendable {
     func updateTask(_ task: DownloadTask) async
     /// Removes all tasks from the queue
     func clear() async
-}
-
-/// Protocol defining the interface for persistent storage of download tasks.
-public protocol DownloadStorageManaging: Sendable {
-    /// Saves a download task to persistent storage
-    func saveTask(_ task: DownloadTask) async throws
-    /// Loads all saved download tasks
-    func loadTasks() async throws -> [DownloadTask]
-    /// Removes a specific task from storage
-    func removeTask(_ taskId: UUID) async throws
-    /// Updates an existing task in storage
-    func updateTask(_ task: DownloadTask) async throws
-    /// Removes all tasks from storage
-    func clearAll() async throws
 }
