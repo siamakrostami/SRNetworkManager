@@ -34,10 +34,6 @@ public final class NetworkMonitor: @unchecked Sendable {
 
     // MARK: Public
 
-    // MARK: - Public Properties
-
-    public static let shared = NetworkMonitor()
-
     /// A Combine publisher that emits changes to the network status.
     public var status: AnyPublisher<Connectivity, Never> {
         $_status.eraseToAnyPublisher()
