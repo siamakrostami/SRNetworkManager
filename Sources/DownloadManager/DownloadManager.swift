@@ -199,6 +199,37 @@ public final class DownloadManager: @unchecked Sendable {
         }
     }
     
+    func handleDownloadCompletion(tempURL: URL, originalURL: URL) {
+        Task {
+            guard let task = await eventsManager.getAllTasks().first(where: { $0.url == originalURL }) else { return }
+            
+            do {
+                let temporaryDirectory = FileManager.default.temporaryDirectory
+                let temporaryCopyURL = temporaryDirectory.appendingPathComponent(UUID().uuidString)
+                
+                try FileManager.default.copyItem(at: tempURL, to: temporaryCopyURL)
+                
+                let fileData = try Data(contentsOf: temporaryCopyURL)
+                let mimeType = MimeTypeDetector.detectMimeType(from: fileData) ??
+                MimeTypeDetector.detectMimeType(fromExtension: task.url.pathExtension)
+                
+                var updatedTask = task
+                updatedTask.fileName = task.fileName + (task.fileName.contains(".") ? "" : ".\(mimeType?.ext ?? "download")")
+                
+                try await storage.saveFile(at: temporaryCopyURL, for: updatedTask)
+                try? FileManager.default.removeItem(at: temporaryCopyURL)
+                
+                updatedTask.state = .completed
+                await eventsManager.updateTask(updatedTask)
+                await eventsManager.emitStateChange(taskId: task.id, state: .completed)
+                
+            } catch {
+                print("Download error: \(error)")
+                await handleDownloadError(task: task, error: error)
+            }
+        }
+    }
+    
     // MARK: - Private Methods
     
     private func startQueueProcessing() async {
@@ -319,90 +350,11 @@ public final class DownloadManager: @unchecked Sendable {
 
 // MARK: - URLSession Delegate
 
-private final class SessionDelegate: NSObject, URLSessionDownloadDelegate, URLSessionDataDelegate, @unchecked Sendable {
+private final class SessionDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
     private weak var manager: DownloadManager?
-    private var receivedData: [UUID: Data] = [:] // For non-background downloads
     
     func setManager(_ manager: DownloadManager) {
         self.manager = manager
-    }
-    
-    func urlSession(
-        _ session: URLSession,
-        downloadTask: URLSessionDownloadTask,
-        didFinishDownloadingTo location: URL
-    ) {
-        let temporaryDirectory = FileManager.default.temporaryDirectory
-        let temporaryCopyURL = temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        
-        try? FileManager.default.copyItem(at: location, to: temporaryCopyURL)
-        
-        debugPrint("Downloaded file to \(temporaryCopyURL.path)")
-        Task {
-            guard let manager = manager,
-                  let url = downloadTask.originalRequest?.url,
-                  let task = await manager.eventsManager.getAllTasks().first(where: { $0.url == url })
-            else { return }
-            
-            do {
-                
-                let fileData = try Data(contentsOf: location)
-                let mimeType = MimeTypeDetector.detectMimeType(from: fileData) ??
-                MimeTypeDetector.detectMimeType(fromExtension: url.pathExtension)
-                
-                let fileName = task.fileName + (task.fileName.contains(".") ? "" : ".\(mimeType?.ext ?? "download")")
-                
-                var updatedTask = task
-                updatedTask.fileName = fileName
-                
-                try await manager.storage.saveFile(at: temporaryCopyURL, for: updatedTask)
-                try? FileManager.default.removeItem(at: temporaryCopyURL)
-                
-                updatedTask.state = .completed
-                await manager.eventsManager.updateTask(updatedTask)
-                await manager.eventsManager.emitStateChange(taskId: task.id, state: .completed)
-                
-            } catch {
-                print("File error: \(error)")
-                await manager.handleDownloadError(task: task, error: error)
-            }
-        }
-    }
-
-    
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didCompleteWithError error: Error?) {
-        guard let url = dataTask.originalRequest?.url,
-              let taskId = manager?.activeDownloads.first(where: { $0.value == dataTask })?.key else { return }
-        
-        Task {
-            if let error = error {
-                if let task = await manager?.eventsManager.getAllTasks().first(where: { $0.id == taskId }) {
-                    await manager?.handleDownloadError(task: task, error: error)
-                }
-            } else if let receivedData = receivedData[taskId],
-                      let task = await manager?.eventsManager.getAllTasks().first(where: { $0.id == taskId }) {
-                do {
-                    let temporaryURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-                    try receivedData.write(to: temporaryURL)
-                    
-                    var updatedTask = task
-                    let mimeType = MimeTypeDetector.detectMimeType(from: receivedData) ??
-                    MimeTypeDetector.detectMimeType(fromExtension: url.pathExtension)
-                    
-                    updatedTask.fileName = task.fileName + (task.fileName.contains(".") ? "" : ".\(mimeType?.ext ?? "download")")
-                    
-                    try await manager?.storage.saveFile(at: temporaryURL, for: updatedTask)
-                    try? FileManager.default.removeItem(at: temporaryURL)
-                    
-                    updatedTask.state = .completed
-                    await manager?.eventsManager.updateTask(updatedTask)
-                    await manager?.eventsManager.emitStateChange(taskId: taskId, state: .completed)
-                } catch {
-                    await manager?.handleDownloadError(task: task, error: error)
-                }
-            }
-            self.receivedData.removeValue(forKey: taskId)
-        }
     }
     
     func urlSession(
@@ -420,8 +372,37 @@ private final class SessionDelegate: NSObject, URLSessionDownloadDelegate, URLSe
             
             let progress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
             let speed = Double(bytesWritten)
+            
             await manager.eventsManager.emitProgress(taskId: task.id, progress: progress, speed: speed)
         }
+    }
+    
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: Error?
+    ) {
+        guard let downloadTask = task as? URLSessionDownloadTask,
+              let manager = manager,
+              let url = downloadTask.originalRequest?.url else { return }
+        
+        Task {
+            if let task = await manager.eventsManager.getAllTasks().first(where: { $0.url == url }),
+               let error = error {
+                await manager.handleDownloadError(task: task, error: error)
+            }
+        }
+    }
+    
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {
+        guard let manager = manager,
+              let url = downloadTask.originalRequest?.url else { return }
+        
+        manager.handleDownloadCompletion(tempURL: location, originalURL: url)
     }
 }
 
