@@ -1,0 +1,15 @@
+{
+  "originHash" : "f206328272d4fe3ae0923af9b496e47fa6779f5f82334ba53f56e9a6136948d7",
+  "pins" : [
+    {
+      "identity" : "srnetworkmanager",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/siamakrostami/SRNetworkManager",
+      "state" : {
+        "revision" : "58fef80c93c65a69d6c7cd9f9391fdccacd10d62",
+        "version" : "1.0.21"
+      }
+    }
+  ],
+  "version" : 3
+}
