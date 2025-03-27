@@ -6,7 +6,7 @@ public enum ConnectionHeaders: Sendable {
     case keepAlive
     case close
     case custom(String)
-    
+
     public var value: String {
         switch self {
         case .keepAlive:
@@ -32,7 +32,7 @@ public enum AcceptHeaders: Sendable {
     case text
     case combinedAll
     case custom(String)
-    
+
     public var value: String {
         switch self {
         case .all:
@@ -63,7 +63,7 @@ public enum ContentTypeHeaders: Sendable {
     case urlEncoded
     case formData
     case custom(String)
-    
+
     public var value: String {
         switch self {
         case .applicationJson:
@@ -94,7 +94,7 @@ public enum AcceptEncodingHeaders: Sendable {
     case identity
     case all
     case custom(String)
-    
+
     public var value: String {
         switch self {
         case .gzip:
@@ -126,7 +126,7 @@ public enum AcceptLanguageHeaders: Sendable {
     case fa
     case all
     case custom(String)
-    
+
     public var value: String {
         switch self {
         case .en:
@@ -151,14 +151,17 @@ public enum AuthorizationType: Sendable {
     case bearer(token: String)
     case basic(username: String, password: String)
     case custom(String)
-    
+
     public var value: String {
         switch self {
         case .bearer(let token):
             return "Bearer \(token)"
         case .basic(let username, let password):
             let credentials = "\(username):\(password)"
-            guard let encodedCredentials = credentials.data(using: .utf8)?.base64EncodedString() else {
+            guard
+                let encodedCredentials = credentials.data(using: .utf8)?
+                    .base64EncodedString()
+            else {
                 return ""
             }
             return "Basic \(encodedCredentials)"
@@ -177,59 +180,100 @@ public enum AuthorizationType: Sendable {
 public class HeaderHandler: @unchecked Sendable {
     // MARK: Lifecycle
 
-    private init() {}
+    private init() { _headers = [:] }
 
     // MARK: Internal
 
     public static let shared = HeaderHandler()
 
+    private let queue = DispatchQueue(label: "com.headerHandler.queue")
+
     @discardableResult
-    public func addContentTypeHeader(type: ContentTypeHeaders) -> HeaderHandler {
-        self.headers.updateValue(type.value, forKey: ContentTypeHeaders.name)
-        return self
+    public func addContentTypeHeader(type: ContentTypeHeaders) -> HeaderHandler
+    {
+        queue.sync {
+            _headers.updateValue(type.value, forKey: ContentTypeHeaders.name)
+            return self
+        }
+
     }
 
     @discardableResult
     public func addConnectionHeader(type: ConnectionHeaders) -> HeaderHandler {
-        self.headers.updateValue(type.value, forKey: ConnectionHeaders.name)
-        return self
+        queue.sync {
+            _headers.updateValue(type.value, forKey: ConnectionHeaders.name)
+            return self
+        }
+
     }
 
     @discardableResult
     public func addAcceptHeaders(type: AcceptHeaders) -> HeaderHandler {
-        self.headers.updateValue(type.value, forKey: AcceptHeaders.name)
-        return self
+        queue.sync {
+            _headers.updateValue(type.value, forKey: AcceptHeaders.name)
+            return self
+        }
+
     }
 
     @discardableResult
-    public func addAcceptLanguageHeaders(type: AcceptLanguageHeaders) -> HeaderHandler {
-        self.headers.updateValue(type.value, forKey: AcceptLanguageHeaders.name)
-        return self
+    public func addAcceptLanguageHeaders(type: AcceptLanguageHeaders)
+        -> HeaderHandler
+    {
+        queue.sync {
+            _headers.updateValue(type.value, forKey: AcceptLanguageHeaders.name)
+            return self
+        }
+
     }
 
     @discardableResult
-    public func addAcceptEncodingHeaders(type: AcceptEncodingHeaders) -> HeaderHandler {
-        self.headers.updateValue(type.value, forKey: AcceptEncodingHeaders.name)
-        return self
+    public func addAcceptEncodingHeaders(type: AcceptEncodingHeaders)
+        -> HeaderHandler
+    {
+        queue.sync {
+            _headers.updateValue(type.value, forKey: AcceptEncodingHeaders.name)
+            return self
+        }
+
     }
 
     @discardableResult
-    public func addAuthorizationHeader(type: AuthorizationType) -> HeaderHandler {
-        self.headers.updateValue(type.value, forKey: AuthorizationType.name)
-        return self
+    public func addAuthorizationHeader(type: AuthorizationType) -> HeaderHandler
+    {
+        queue.sync {
+            _headers.updateValue(type.value, forKey: AuthorizationType.name)
+            return self
+        }
+
     }
 
     @discardableResult
     public func addCustomHeader(name: String, value: String) -> HeaderHandler {
-        self.headers.updateValue(value, forKey: name)
-        return self
+        queue.sync {
+            _headers.updateValue(value, forKey: name)
+            return self
+        }
+
     }
 
     public func build() -> [String: String] {
-        return self.headers
+        return headers
     }
 
     // MARK: Private
 
-    private var headers = [String: String]()
+    private var _headers: [String: String] = [:]
+    private var headers: [String: String] {
+        get {
+            queue.sync {
+                _headers
+            }
+        }
+        set {
+            queue.sync {
+                _headers = newValue
+            }
+        }
+    }
 }

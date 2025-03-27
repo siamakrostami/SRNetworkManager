@@ -22,12 +22,13 @@ public final class APIClient: @unchecked
         decoder: JSONDecoder? = nil,
         retryHandler: RetryHandler? = nil
     ) {
-        self.logLevel = logLevel
+        self._logLevel = logLevel
         self.apiQueue = DispatchQueue(label: "com.apiQueue", qos: qos)
-        self.decoder = decoder ?? JSONDecoder()
-        self._retryHandler =
-            retryHandler ?? DefaultRetryHandler(numberOfRetries: 0)
-        self.configuration = configuration
+        self._decoder = decoder ?? JSONDecoder()
+        self._retryHandler = retryHandler ?? DefaultRetryHandler(numberOfRetries: 0)
+        self._configuration = configuration
+        self._requestsToRetry = []
+        self._activeSessions = Set()
     }
 
     // MARK: Private
@@ -38,29 +39,81 @@ public final class APIClient: @unchecked
     private let apiQueue: DispatchQueue
 
     /// Current log level for request/response logging
-    private var logLevel: LogLevel
-
-    private var configuration: URLSessionConfiguration?
-
-    /// Retry handler for failed requests
-    private var _retryHandler: RetryHandler?
-
-    /// Array to store requests that are to be retried
-    private var requestsToRetry: [URLRequest] = []
-
-    private var decoder: JSONDecoder
-
-    private var activeSessions: Set<URLSession> = Set()
-
-    /// Thread-safe access to the retry handler
-    private var retryHandler: RetryHandler {
-        get {
-            return apiQueue.sync {
-                _retryHandler ?? DefaultRetryHandler(numberOfRetries: 0)
-            }
-        }
-        set {
-            apiQueue.sync { _retryHandler = newValue }
+       private var _logLevel: LogLevel
+       
+       /// Thread-safe access to log level
+       private var logLevel: LogLevel {
+           get { return apiQueue.sync { _logLevel } }
+           set { apiQueue.sync { _logLevel = newValue } }
+       }
+       
+       private var _configuration: URLSessionConfiguration?
+       
+       /// Thread-safe access to configuration
+       private var configuration: URLSessionConfiguration? {
+           get { return apiQueue.sync { _configuration } }
+           set { apiQueue.sync { _configuration = newValue } }
+       }
+       
+       /// Retry handler for failed requests
+       private var _retryHandler: RetryHandler?
+       
+       /// Thread-safe access to the retry handler
+       private var retryHandler: RetryHandler {
+           get { return apiQueue.sync { _retryHandler ?? DefaultRetryHandler(numberOfRetries: 0) } }
+           set { apiQueue.sync { _retryHandler = newValue } }
+       }
+       
+       /// Array to store requests that are to be retried
+       private var _requestsToRetry: [URLRequest]
+       
+       /// Thread-safe access to requests to retry
+       private var requestsToRetry: [URLRequest] {
+           get { return apiQueue.sync { _requestsToRetry } }
+           set { apiQueue.sync(flags: .barrier) { _requestsToRetry = newValue } }
+       }
+       
+       /// Thread-safe method to append a request to retry
+       private func appendRequestToRetry(_ request: URLRequest) {
+           apiQueue.sync(flags: .barrier) {
+               _requestsToRetry.append(request)
+           }
+       }
+       
+       /// Thread-safe method to clear requests to retry
+       private func clearRequestsToRetry() {
+           apiQueue.sync(flags: .barrier) {
+               _requestsToRetry.removeAll()
+           }
+       }
+       
+       private var _decoder: JSONDecoder
+       
+       /// Thread-safe access to decoder
+       private var decoder: JSONDecoder {
+           get { return apiQueue.sync { _decoder } }
+           set { apiQueue.sync { _decoder = newValue } }
+       }
+       
+       private var _activeSessions: Set<URLSession>
+       
+       /// Thread-safe access to active sessions
+       private var activeSessions: Set<URLSession> {
+           get { return apiQueue.sync { _activeSessions } }
+           set { apiQueue.sync(flags: .barrier) { _activeSessions = newValue } }
+       }
+       
+       /// Thread-safe method to add a session
+       private func addSession(_ session: URLSession) {
+           apiQueue.async {
+               self._activeSessions.insert(session)
+           }
+       }
+       
+       /// Thread-safe method to remove a session
+    private func removeSession(_ session: URLSession) {
+        apiQueue.async {
+            self._activeSessions.remove(session)
         }
     }
 }
@@ -88,15 +141,15 @@ extension APIClient {
         urlRequest: URLRequest, retryCount: Int
     ) -> AnyPublisher<T, NetworkError> {
         URLSessionLogger.shared.logRequest(urlRequest, logLevel: logLevel)
-
+        
         let session = configuredSession(configuration: configuration)
-
+        
         return session.dataTaskPublisher(for: urlRequest)
             .subscribe(on: apiQueue)
-            .tryMap { [weak self] output in
+            .tryMap { output in
                 URLSessionLogger.shared.logResponse(
                     output.response, data: output.data, error: nil,
-                    logLevel: self?.logLevel)
+                    logLevel: self.logLevel)
                 guard let httpResponse = output.response as? HTTPURLResponse
                 else {
                     throw NetworkError.unknown
@@ -104,29 +157,22 @@ extension APIClient {
                 if 200..<300 ~= httpResponse.statusCode {
                     return output.data
                 } else {
-                    guard
-                        let error = self?.mapErrorResponseToCustomErrorData(
-                            output.data, statusCode: httpResponse.statusCode)
-                    else {
-                        throw NetworkError.unknown
-                    }
+                    let error = self.mapErrorResponseToCustomErrorData(
+                        output.data, statusCode: httpResponse.statusCode)
+                    
                     URLSessionLogger.shared.logResponse(
                         output.response, data: output.data, error: error,
-                        logLevel: self?.logLevel)
+                        logLevel: self.logLevel)
                     throw error
                 }
             }
-            .decode(type: T.self, decoder: JSONDecoder())
-            .mapError { [weak self] error -> NetworkError in
+            .decode(type: T.self, decoder: self.decoder)
+            .mapError { error -> NetworkError in
                 URLSessionLogger.shared.logResponse(
-                    nil, data: nil, error: error, logLevel: self?.logLevel)
-                return self?.mapErrorToNetworkError(error) ?? .unknown
+                    nil, data: nil, error: error, logLevel: self.logLevel)
+                return self.mapErrorToNetworkError(error)
             }
-            .catch {
-                [weak self] error -> AnyPublisher<T, NetworkError> in
-                guard let self = self else {
-                    return Fail(error: .unknown).eraseToAnyPublisher()
-                }
+            .catch { error -> AnyPublisher<T, NetworkError> in
                 return self.handleRetry(
                     urlRequest: urlRequest, retryCount: retryCount, error: error
                 )
@@ -139,23 +185,24 @@ extension APIClient {
     private func handleRetry<T: Codable>(
         urlRequest: URLRequest, retryCount: Int, error: NetworkError
     ) -> AnyPublisher<T, NetworkError> {
-        if retryCount > 0
-            && retryHandler.shouldRetry(request: urlRequest, error: error)
-        {
-            apiQueue.sync(flags: .barrier) {
-                requestsToRetry.append(urlRequest)
-            }
+        if retryCount > 0 && retryHandler.shouldRetry(request: urlRequest, error: error) {
+            // Safely append to requestsToRetry
+            appendRequestToRetry(urlRequest)
+            
+            // Safely get the last request
+            let lastRequest = apiQueue.sync { _requestsToRetry.last ?? urlRequest }
+            
             let (newUrlRequest, newError) = retryHandler.modifyRequestForRetry(
-                client: self, request: requestsToRetry.last ?? urlRequest,
-                error: error)
+                client: self, request: lastRequest, error: error)
+                
             if let newError = newError {
                 return Fail(error: newError).eraseToAnyPublisher()
             }
-            apiQueue.sync(flags: .barrier) {
-                requestsToRetry.removeAll()
-            }
-            return makeRequest(
-                urlRequest: newUrlRequest, retryCount: retryCount - 1)
+            
+            // Safely clear the requests
+            clearRequestsToRetry()
+            
+            return makeRequest(urlRequest: newUrlRequest, retryCount: retryCount - 1)
         } else {
             return Fail(error: error).eraseToAnyPublisher()
         }
@@ -209,14 +256,13 @@ extension APIClient {
             let progressDelegate = UploadProgressDelegate()
             progressDelegate.progressHandler = progressCompletion
             let session = self.configuredSession(
-                delegate: progressDelegate, configuration: configuration)
+                delegate: progressDelegate, configuration: self.configuration)
 
             let task = session.uploadTask(with: newUrlRequest, from: bodyData) {
                 data, response, error in
                 URLSessionLogger.shared.logResponse(
                     response, data: data, error: error, logLevel: self.logLevel)
 
-                // Ensure that this part is Sendable-safe
                 if let error = error {
                     sendablePromise.resolve(
                         .failure(self.mapErrorToNetworkError(error)))
@@ -245,13 +291,12 @@ extension APIClient {
 
             task.resume()
         }
-        .flatMap {
-            [weak self] data -> AnyPublisher<T, NetworkError> in
+        .flatMap { [weak self] data -> AnyPublisher<T, NetworkError> in
             guard let self = self else {
                 return Fail(error: .unknown).eraseToAnyPublisher()
             }
             return Just(data)
-                .decode(type: T.self, decoder: JSONDecoder())
+                .decode(type: T.self, decoder: self.decoder)
                 .mapError { self.mapErrorToNetworkError($0) }
                 .catch { error -> AnyPublisher<T, NetworkError> in
                     self.handleRetry(
@@ -322,8 +367,8 @@ extension APIClient {
 
             if 200..<300 ~= httpResponse.statusCode {
                 do {
-                    let decodedResponse = try JSONDecoder().decode(
-                        T.self, from: data)
+                    // Use thread-safe decoder
+                    let decodedResponse = try self.decoder.decode(T.self, from: data)
                     return decodedResponse
                 } catch {
                     throw mapErrorToNetworkError(error)
@@ -343,8 +388,7 @@ extension APIClient {
     private func handleAsyncRetry<T: Codable>(
         urlRequest: URLRequest, retryCount: Int, error: Error
     ) async throws -> T {
-        let networkError =
-            error as? NetworkError ?? mapErrorToNetworkError(error)
+        let networkError = error as? NetworkError ?? mapErrorToNetworkError(error)
 
         return try await withCheckedThrowingContinuation { continuation in
             Task {
@@ -353,24 +397,23 @@ extension APIClient {
                         request: urlRequest, error: networkError)
 
                     if retryCount > 0 && shouldRetry {
-                        apiQueue.sync(flags: .barrier) {
-                            requestsToRetry.append(urlRequest)
-                        }
+                        // Use thread-safe method
+                        appendRequestToRetry(urlRequest)
+                        
+                        // Safely access last request
+                        let lastRequest = apiQueue.sync { _requestsToRetry.last ?? urlRequest }
+                        
+                        let newUrlRequest = try await retryHandler.modifyRequestForRetryAsync(
+                            client: self,
+                            request: lastRequest,
+                            error: networkError)
 
-                        let newUrlRequest =
-                            try await retryHandler.modifyRequestForRetryAsync(
-                                client: self,
-                                request: requestsToRetry.last ?? urlRequest,
-                                error: networkError)
-
-                        apiQueue.sync(flags: .barrier) {
-                            requestsToRetry.removeAll()
-                        }
+                        // Use thread-safe method
+                        clearRequestsToRetry()
 
                         do {
                             let result: T = try await makeAsyncRequest(
-                                urlRequest: newUrlRequest,
-                                retryCount: retryCount - 1)
+                                urlRequest: newUrlRequest, retryCount: retryCount - 1)
                             continuation.resume(returning: result)
                         } catch {
                             continuation.resume(throwing: error)
@@ -460,8 +503,8 @@ extension APIClient {
 
             if 200..<300 ~= httpResponse.statusCode {
                 do {
-                    let decodedResponse = try JSONDecoder().decode(
-                        T.self, from: data)
+                    // Use thread-safe decoder
+                    let decodedResponse = try self.decoder.decode(T.self, from: data)
                     return decodedResponse
                 } catch {
                     throw mapErrorToNetworkError(error)
@@ -517,44 +560,61 @@ extension APIClient {
 
 // MARK: - StreamingSessionDelegate
 
-private class StreamingSessionDelegate<T: Codable>: NSObject,
-    URLSessionDataDelegate, @unchecked Sendable
-{
+private class StreamingSessionDelegate<T: Codable>: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     let subject = PassthroughSubject<T, Error>()
-    var dataBuffer = Data()
-    var logLevel: LogLevel = .none
-
+    private let queue = DispatchQueue(label: "com.streamingSessionDelegate.queue")
+    private var _dataBuffer = Data()
+    private var _logLevel: LogLevel = .none
+    
+    var dataBuffer: Data {
+        get { queue.sync { _dataBuffer } }
+        set { queue.sync { _dataBuffer = newValue } }
+    }
+    
+    var logLevel: LogLevel {
+        get { queue.sync { _logLevel } }
+        set { queue.sync { _logLevel = newValue } }
+    }
+    
+    func appendToBuffer(_ data: Data) {
+        queue.sync { _dataBuffer.append(data) }
+    }
+    
+    func removeFromBuffer(range: Range<Data.Index>) {
+        queue.sync { _dataBuffer.removeSubrange(range) }
+    }
+    
     func startRequest(session: URLSession, urlRequest: URLRequest) {
         URLSessionLogger.shared.logRequest(urlRequest, logLevel: logLevel)
         let task = session.dataTask(with: urlRequest)
         task.resume()
     }
 
-    // Handle data received
     func urlSession(
         _ session: URLSession, dataTask: URLSessionDataTask,
         didReceive data: Data
     ) {
-        dataBuffer.append(data)
-
-        while let range = dataBuffer.range(of: Data("\n".utf8)) {
-            let lineData = dataBuffer.subdata(
-                in: dataBuffer.startIndex..<range.lowerBound)
-            dataBuffer.removeSubrange(dataBuffer.startIndex..<range.upperBound)
-
-            do {
-                let decoder = JSONDecoder()
-                let decodedObject = try decoder.decode(T.self, from: lineData)
-                subject.send(decodedObject)
-            } catch {
-                // Handle decoding error for this line
-                subject.send(completion: .failure(error))
-                return
+        appendToBuffer(data)
+        
+        // Process buffer in a thread-safe way
+        queue.sync {
+            while let range = _dataBuffer.range(of: Data("\n".utf8)) {
+                let lineData = _dataBuffer.subdata(
+                    in: _dataBuffer.startIndex..<range.lowerBound)
+                _dataBuffer.removeSubrange(_dataBuffer.startIndex..<range.upperBound)
+                
+                do {
+                    let decoder = JSONDecoder()
+                    let decodedObject = try decoder.decode(T.self, from: lineData)
+                    subject.send(decodedObject)
+                } catch {
+                    subject.send(completion: .failure(error))
+                    return
+                }
             }
         }
     }
-
-    // Handle errors and completion
+    
     func urlSession(
         _ session: URLSession, task: URLSessionTask,
         didCompleteWithError error: Error?
@@ -565,15 +625,17 @@ private class StreamingSessionDelegate<T: Codable>: NSObject,
             subject.send(completion: .failure(error))
         } else {
             // If there's any data left in buffer after the stream ends
-            if !dataBuffer.isEmpty {
-                do {
-                    let decoder = JSONDecoder()
-                    let decodedObject = try decoder.decode(
-                        T.self, from: dataBuffer)
-                    subject.send(decodedObject)
-                } catch {
-                    subject.send(completion: .failure(error))
-                    return
+            queue.sync {
+                if !_dataBuffer.isEmpty {
+                    do {
+                        let decoder = JSONDecoder()
+                        let decodedObject = try decoder.decode(
+                            T.self, from: _dataBuffer)
+                        subject.send(decodedObject)
+                    } catch {
+                        subject.send(completion: .failure(error))
+                        return
+                    }
                 }
             }
             subject.send(completion: .finished)
@@ -726,9 +788,9 @@ extension APIClient {
                 configuration: configuration, delegate: delegate,
                 delegateQueue: nil)
         }
-        return URLSession(
-            configuration: configuration, delegate: delegate, delegateQueue: nil
-        )
+        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
+        addSession(session)
+        return session
     }
 
     /// Creates the body for a multipart form data request.
@@ -781,19 +843,18 @@ extension APIClient {
 
 extension APIClient {
     private func trackSession(_ session: URLSession) {
-        apiQueue.async(flags: .barrier) {
-            self.activeSessions.insert(session)
-        }
+        addSession(session)
     }
 
     /// Cancels all ongoing network requests
     func cancelAllRequests() {
+        let sessionsToCancel = activeSessions
         apiQueue.sync(flags: .barrier) {
-            activeSessions.forEach { session in
+            sessionsToCancel.forEach { session in
                 session.invalidateAndCancel()
             }
-            activeSessions.removeAll()
-            requestsToRetry.removeAll()
+            _activeSessions.removeAll()
+            _requestsToRetry.removeAll()
         }
     }
 }

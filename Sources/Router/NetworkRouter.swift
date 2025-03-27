@@ -28,14 +28,14 @@ public struct EmptyParameters: Codable {}
 public protocol NetworkRouter: Sendable {
     associatedtype Parameters: Codable = EmptyParameters
     associatedtype QueryParameters: Codable = EmptyParameters
-    
+
     var baseURLString: String { get }
     var method: RequestMethod? { get }
     var path: String { get }
     var headers: [String: String]? { get }
     var params: Parameters? { get }
     var queryParams: QueryParameters? { get }
-    var version: APIVersion? {get}
+    var version: APIVersion? { get }
     func asURLRequest() throws -> URLRequest
 }
 
@@ -65,7 +65,7 @@ extension NetworkRouter {
     public var queryParams: QueryParameters? {
         return nil
     }
-    
+
     public var version: APIVersion? {
         return nil
     }
@@ -92,17 +92,22 @@ extension NetworkRouter {
             }
         default:
             // For POST, PUT, PATCH, etc., check the content type to decide encoding
-            if let contentType = headers?[ContentTypeHeaders.name], contentType == ContentTypeHeaders.formData.value {
+            if let contentType = headers?[ContentTypeHeaders.name],
+                contentType == ContentTypeHeaders.formData.value
+            {
                 // Use URLEncoding for form-urlencoded content
                 if let params = params {
                     let urlEncoding = URLEncoding(destination: .httpBody)
                     try urlEncoding.encode(&urlRequest, with: params)
-                    urlRequest.setValue("application/x-www-form-urlencoded; charset=utf-8", forHTTPHeaderField: "Content-Type")
+                    urlRequest.setValue(
+                        "application/x-www-form-urlencoded; charset=utf-8",
+                        forHTTPHeaderField: "Content-Type")
                 }
             } else {
                 // Default to JSON encoding
                 if let queryParams = queryParams {
-                    try URLEncoding(destination: .queryString).encode(&urlRequest, with: queryParams)
+                    try URLEncoding(destination: .queryString).encode(
+                        &urlRequest, with: queryParams)
                 }
                 if let params = params {
                     try JSONEncoding().encode(&urlRequest, with: params)
