@@ -30,7 +30,8 @@ let package = Package(
                 "UploadProgress",
                 "Router",
                 "Data",
-                "Reachability"
+                "Reachability",
+                "DownloadManager"
             ],
             swiftSettings: [
                 .define("SPM_SWIFT_6"),

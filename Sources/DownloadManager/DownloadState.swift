@@ -5,9 +5,10 @@
 //  Created by Siamak Rostami on 12/20/24.
 //
 
-
-import Foundation
 import Combine
+import Foundation
+
+// MARK: - DownloadState
 
 /// Represents the current state of a download task.
 ///
@@ -29,6 +30,8 @@ public enum DownloadState: String, Codable, Sendable {
     case cancelled
 }
 
+// MARK: - DownloadPriority
+
 /// Defines priority levels for download tasks.
 ///
 /// Higher priority tasks are processed before lower priority ones
@@ -42,7 +45,9 @@ public enum DownloadPriority: Int, Codable, Sendable {
     case high = 2
     /// Highest priority, these tasks are processed first
     case critical = 3
-    
+
+    // MARK: Internal
+
     /// Maps priority levels to URLSession task priority values
     var urlSessionPriority: Float {
         switch self {
@@ -54,11 +59,39 @@ public enum DownloadPriority: Int, Codable, Sendable {
     }
 }
 
+// MARK: - DownloadTask
+
 /// Represents a single download task with its associated metadata and state.
 ///
 /// This structure contains all the information needed to track and manage
 /// a download throughout its lifecycle.
 public struct DownloadTask: Identifiable, Codable, Sendable {
+    // MARK: Lifecycle
+
+    /// Creates a new download task.
+    /// - Parameters:
+    ///   - url: The source URL to download from
+    ///   - fileName: Optional custom filename, defaults to URL's last path component
+    ///   - priority: Priority level for the download, defaults to .normal
+    public init(
+        url: URL,
+        fileName: String? = nil,
+        priority: DownloadPriority = .normal
+    ) {
+        self.id = UUID()
+        self.url = url
+        self.fileName = fileName ?? url.lastPathComponent
+        self.priority = priority
+        self.state = .queued
+        self.progress = 0
+        self.expectedBytes = 0
+        self.downloadedBytes = 0
+        self.speed = 0
+        self.createdAt = Date()
+    }
+
+    // MARK: Public
+
     /// Unique identifier for the download task
     public let id: UUID
     /// Source URL for the download
@@ -81,29 +114,9 @@ public struct DownloadTask: Identifiable, Codable, Sendable {
     public var createdAt: Date
     /// Error message if the task failed
     public var error: String?
-    
-    /// Creates a new download task.
-    /// - Parameters:
-    ///   - url: The source URL to download from
-    ///   - fileName: Optional custom filename, defaults to URL's last path component
-    ///   - priority: Priority level for the download, defaults to .normal
-    public init(
-        url: URL,
-        fileName: String? = nil,
-        priority: DownloadPriority = .normal
-    ) {
-        self.id = UUID()
-        self.url = url
-        self.fileName = fileName ?? url.lastPathComponent
-        self.priority = priority
-        self.state = .queued
-        self.progress = 0
-        self.expectedBytes = 0
-        self.downloadedBytes = 0
-        self.speed = 0
-        self.createdAt = Date()
-    }
 }
+
+// MARK: - DownloadEvent
 
 /// Represents events that can occur during the download process.
 ///
@@ -118,26 +131,30 @@ public enum DownloadEvent: Equatable, Sendable {
     case error(UUID, String)
     /// Queue update event with current list of tasks
     case queueUpdated([DownloadTask])
-    
+
+    // MARK: Public
+
     public static func == (lhs: DownloadEvent, rhs: DownloadEvent) -> Bool {
         switch (lhs, rhs) {
         case let (.progress(id1, prog1, speed1), .progress(id2, prog2, speed2)):
             return id1 == id2 && prog1 == prog2 && speed1 == speed2
-            
+
         case let (.stateChange(id1, state1), .stateChange(id2, state2)):
             return id1 == id2 && state1 == state2
-            
+
         case let (.error(id1, error1), .error(id2, error2)):
             return id1 == id2 && error1 == error2
-            
+
         case let (.queueUpdated(tasks1), .queueUpdated(tasks2)):
             return tasks1.map { $0.id } == tasks2.map { $0.id }
-            
+
         default:
             return false
         }
     }
 }
+
+// MARK: - DownloadError
 
 /// Represents possible errors that can occur during download operations.
 public enum DownloadError: Error {

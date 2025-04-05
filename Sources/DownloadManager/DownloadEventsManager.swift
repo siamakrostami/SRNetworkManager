@@ -1,11 +1,18 @@
-import Foundation
 import Combine
+// Manages download-related events and state updates.
+//
+// This actor provides thread-safe event emission and state tracking
+// for all download operations, supporting both individual task
+// monitoring and global event observation.
+import Foundation
+
+// MARK: - DownloadEventManaging
 
 /// Protocol defining the interface for download event management
 public protocol DownloadEventManaging: Sendable {
     var eventsPublisher: AnyPublisher<DownloadEvent, Never> { get }
     var tasksPublisher: AnyPublisher<[DownloadTask], Never> { get }
-    
+
     func emitProgress(taskId: UUID, progress: Double, speed: Double) async
     func emitStateChange(taskId: UUID, state: DownloadState) async
     func emitError(taskId: UUID, error: String) async
@@ -14,61 +21,54 @@ public protocol DownloadEventManaging: Sendable {
     func getAllTasks() async -> [DownloadTask]
 }
 
-/// Manages download-related events and state updates.
-///
-/// This actor provides thread-safe event emission and state tracking
-/// for all download operations, supporting both individual task
-/// monitoring and global event observation.
-import Foundation
-import Combine
+// MARK: - DownloadEventsManager
 
-public final class DownloadEventsManager: DownloadEventManaging, @unchecked Sendable {
-        // MARK: - Properties
-    
-    private let eventSubject: PassthroughSubject<DownloadEvent, Never>
-    private let taskSubject: CurrentValueSubject<[DownloadTask], Never>
-    private var tasks: [UUID: DownloadTask]
-    
-        // Serial queue for synchronization
-    private let queue: DispatchQueue
-    
-        // MARK: - Initialization
-    
+public final class DownloadEventsManager: DownloadEventManaging, @unchecked
+    Sendable
+{
+    // MARK: Lifecycle
+
+    // MARK: - Initialization
+
     public init() {
         self.eventSubject = PassthroughSubject<DownloadEvent, Never>()
         self.taskSubject = CurrentValueSubject<[DownloadTask], Never>([])
         self.tasks = [:]
         self.queue = DispatchQueue(label: "com.SRNetworkManager.eventsManager")
     }
-    
-        // MARK: - Public Interface
-    
+
+    // MARK: Public
+
+    // MARK: - Public Interface
+
     public var eventsPublisher: AnyPublisher<DownloadEvent, Never> {
         eventSubject.eraseToAnyPublisher()
     }
-    
+
     public var tasksPublisher: AnyPublisher<[DownloadTask], Never> {
         taskSubject.eraseToAnyPublisher()
     }
-    
-    public func emitProgress(taskId: UUID, progress: Double, speed: Double) async {
+
+    public func emitProgress(taskId: UUID, progress: Double, speed: Double)
+        async
+    {
         queue.async { [weak self] in
             self?.eventSubject.send(.progress(taskId, progress, speed))
         }
     }
-    
+
     public func emitStateChange(taskId: UUID, state: DownloadState) async {
         queue.async { [weak self] in
             self?.eventSubject.send(.stateChange(taskId, state))
         }
     }
-    
+
     public func emitError(taskId: UUID, error: String) async {
         queue.async { [weak self] in
             self?.eventSubject.send(.error(taskId, error))
         }
     }
-    
+
     public func updateTask(_ task: DownloadTask) async {
         await withCheckedContinuation { continuation in
             queue.async { [weak self] in
@@ -82,7 +82,7 @@ public final class DownloadEventsManager: DownloadEventManaging, @unchecked Send
             }
         }
     }
-    
+
     public func removeTask(_ taskId: UUID) async {
         await withCheckedContinuation { continuation in
             queue.async { [weak self] in
@@ -96,7 +96,7 @@ public final class DownloadEventsManager: DownloadEventManaging, @unchecked Send
             }
         }
     }
-    
+
     public func getAllTasks() async -> [DownloadTask] {
         await withCheckedContinuation { continuation in
             queue.async { [weak self] in
@@ -108,15 +108,15 @@ public final class DownloadEventsManager: DownloadEventManaging, @unchecked Send
             }
         }
     }
-    
+
     public func getAllTasks() -> [DownloadTask] {
         queue.sync {
-            return Array(self.tasks.values)
+            Array(self.tasks.values)
         }
     }
-    
-        // MARK: - Helper Methods
-    
+
+    // MARK: - Helper Methods
+
     public func updateTasks(_ tasks: [DownloadTask]) async {
         await withCheckedContinuation { continuation in
             queue.async { [weak self] in
@@ -132,7 +132,7 @@ public final class DownloadEventsManager: DownloadEventManaging, @unchecked Send
             }
         }
     }
-    
+
     public func removeTasks(_ taskIds: [UUID]) async {
         await withCheckedContinuation { continuation in
             queue.async { [weak self] in
@@ -148,7 +148,7 @@ public final class DownloadEventsManager: DownloadEventManaging, @unchecked Send
             }
         }
     }
-    
+
     public func clearAllTasks() async {
         await withCheckedContinuation { continuation in
             queue.async { [weak self] in
@@ -162,9 +162,20 @@ public final class DownloadEventsManager: DownloadEventManaging, @unchecked Send
             }
         }
     }
+
+    // MARK: Private
+
+    // MARK: - Properties
+
+    private let eventSubject: PassthroughSubject<DownloadEvent, Never>
+    private let taskSubject: CurrentValueSubject<[DownloadTask], Never>
+    private var tasks: [UUID: DownloadTask]
+
+    /// Serial queue for synchronization
+    private let queue: DispatchQueue
 }
 
-    // MARK: - Helper Extensions
+// MARK: - Helper Extensions
 
 extension DownloadEventsManager {
     public func getTasks(inState state: DownloadState) async -> [DownloadTask] {
@@ -174,12 +185,14 @@ extension DownloadEventsManager {
                     continuation.resume(returning: [])
                     return
                 }
-                let filteredTasks = self.tasks.values.filter { $0.state == state }
+                let filteredTasks = self.tasks.values.filter {
+                    $0.state == state
+                }
                 continuation.resume(returning: Array(filteredTasks))
             }
         }
     }
-    
+
     public func getTask(withId id: UUID) async -> DownloadTask? {
         await withCheckedContinuation { continuation in
             queue.async { [weak self] in
@@ -191,7 +204,7 @@ extension DownloadEventsManager {
             }
         }
     }
-    
+
     public func hasTask(withId id: UUID) async -> Bool {
         await withCheckedContinuation { continuation in
             queue.async { [weak self] in
