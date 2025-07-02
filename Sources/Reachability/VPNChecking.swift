@@ -5,7 +5,9 @@
 //  Created by Siamak Rostami on 1/30/25.
 //
 
+#if canImport(CFNetwork) && !os(watchOS)
 import CFNetwork
+#endif
 import Foundation
 
 // MARK: - VPNChecking
@@ -70,7 +72,11 @@ public final class VPNChecker: VPNChecking {
         guard !shouldBypassVpnCheck else {
             return false
         }
+#if os(watchOS)
+        return false
+#else
         return checkVPNConnection()
+#endif
     }
 
     // MARK: Private
@@ -92,7 +98,8 @@ public final class VPNChecker: VPNChecking {
 
     // MARK: - Private Methods
 
-    /// Performs the actual VPN connection check
+#if !os(watchOS)
+        /// Performs the actual VPN connection check
     private func checkVPNConnection() -> Bool {
         guard let proxySettings = fetchSystemProxySettings() else {
             return false
@@ -102,14 +109,18 @@ public final class VPNChecker: VPNChecking {
 
     /// Fetches system proxy settings safely
     private func fetchSystemProxySettings() -> [String: Any]? {
+#if canImport(CFNetwork)
         guard let cfDict = CFNetworkCopySystemProxySettings(),
-            let proxySettings = (cfDict.takeRetainedValue() as NSDictionary)
+              let proxySettings = (cfDict.takeRetainedValue() as NSDictionary)
                 as? [String: Any],
-            let scoped = proxySettings["__SCOPED__"] as? [String: Any]
+              let scoped = proxySettings["__SCOPED__"] as? [String: Any]
         else {
             return nil
         }
         return scoped
+#else
+        return nil
+#endif
     }
 
     /// Checks if any VPN interfaces are present in the settings
@@ -120,4 +131,5 @@ public final class VPNChecker: VPNChecking {
             }
         }
     }
+#endif
 }

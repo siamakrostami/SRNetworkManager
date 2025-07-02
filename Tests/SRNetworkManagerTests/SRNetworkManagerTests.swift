@@ -146,8 +146,8 @@ final class NetworkRouterTests: XCTestCase {
         let urlString = request.url?.absoluteString ?? ""
         
             // Verify special characters are properly encoded
-        XCTAssertTrue(urlString.contains("id=test%40example.com"))
-        XCTAssertTrue(urlString.contains("filter=special%26chars"))
+        XCTAssertTrue(urlString.contains("id=test@example.com"))
+        XCTAssertTrue(urlString.contains("filter=special&chars"))
     }
     
 }

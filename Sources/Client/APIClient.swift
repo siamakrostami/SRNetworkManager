@@ -529,7 +529,7 @@ extension APIClient {
     /// Performs a streaming network request using Combine.
     /// - Parameter endpoint: The NetworkRouter defining the request.
     /// - Returns: A publisher that emits decoded responses as they arrive or an error.
-    public func streamRequest<T: Codable>(_ endpoint: any NetworkRouter)
+    public func streamRequest<T: Codable & Sendable>(_ endpoint: any NetworkRouter)
         -> AnyPublisher<T, NetworkError>
     {
         guard let urlRequest = try? endpoint.asURLRequest() else {
@@ -540,7 +540,7 @@ extension APIClient {
     }
 
     /// Internal method to make the actual streaming network request.
-    private func makeStreamRequest<T: Codable>(urlRequest: URLRequest)
+    private func makeStreamRequest<T: Codable & Sendable>(urlRequest: URLRequest)
         -> AnyPublisher<T, NetworkError>
     {
         let sessionDelegate = StreamingSessionDelegate<T>()
@@ -681,8 +681,8 @@ extension APIClient {
     /// Performs a streaming network request using async/await.
     /// - Parameter endpoint: The NetworkRouter defining the request.
     /// - Returns: An AsyncThrowingStream that yields decoded responses as they arrive.
-    @available(iOS 15.0, *)
-    public func asyncStreamRequest<T: Codable>(_ endpoint: any NetworkRouter)
+    @available(iOS 15.0, tvOS 15.0, watchOS 8.0, *)
+    public func asyncStreamRequest<T: Codable & Sendable>(_ endpoint: any NetworkRouter)
         -> AsyncThrowingStream<T, Error>
     {
         guard let urlRequest = try? endpoint.asURLRequest() else {
@@ -695,8 +695,8 @@ extension APIClient {
     }
 
     /// Internal method to make the actual async streaming network request.
-    @available(iOS 15.0, *)
-    private func makeAsyncStreamRequest<T: Codable>(urlRequest: URLRequest)
+    @available(iOS 15.0, tvOS 15.0, watchOS 8.0, *)
+    private func makeAsyncStreamRequest<T: Codable & Sendable>(urlRequest: URLRequest)
         -> AsyncThrowingStream<T, Error>
     {
         return AsyncThrowingStream { [weak self] continuation in
