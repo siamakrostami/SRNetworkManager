@@ -239,14 +239,14 @@ Task {
 let apiClient = APIClient()
 
 apiClient.request(UserAPI())
-    .sink(receiveCompletion: { completion in
+    .sink(receiveCompletion: { [weak self] completion in
         switch completion {
         case .finished:
             print("Request completed successfully")
         case .failure(let error):
             print("Request failed with error: \(error)")
         }
-    }, receiveValue: { (response: UserResponse) in
+    }, receiveValue: { [weak self] (response: UserResponse) in
         print("Received user: \(response)")
     })
     .store(in: &cancellables)
@@ -260,12 +260,12 @@ let apiClient = APIClient()
 let fileData = // ... your file data ...
 let endpoint = UploadAPI()
 
-apiClient.uploadRequest(endpoint, withName: "file", data: fileData) { progress in
+apiClient.uploadRequest(endpoint, withName: "file", data: fileData) { [weak self] progress in
     print("Upload progress: \(progress)")
 }
-.sink(receiveCompletion: { completion in
+.sink(receiveCompletion: { [weak self] completion in
     // Handle completion
-}, receiveValue: { (response: UploadResponse) in
+}, receiveValue: { [weak self] (response: UploadResponse) in
     print("Upload completed: \(response)")
 })
 .store(in: &cancellables)
@@ -296,7 +296,7 @@ network.startMonitoring()
 
 // 1) Combine subscription
 network.status
-    .sink { status in
+    .sink { [weak self] status in
         switch status {
         case .disconnected:
             debugPrint("disconnected")
