@@ -133,7 +133,7 @@ extension APIClient {
             return Fail(error: .unknown).eraseToAnyPublisher()
         }
 
-        return makeRequest(urlRequest: urlRequest, retryCount: 3)
+        return makeRequest(urlRequest: urlRequest, retryCount: self.retryHandler.numberOfRetries)
     }
 
     /// Internal method to make the actual network request.
@@ -231,7 +231,7 @@ extension APIClient {
 
         return makeUploadRequest(
             urlRequest: urlRequest, params: endpoint.params, withName: withName,
-            data: file, progressCompletion: progressCompletion, retryCount: 3
+            data: file, progressCompletion: progressCompletion, retryCount: self.retryHandler.numberOfRetries
         )
         .subscribe(on: apiQueue)
         .eraseToAnyPublisher()
@@ -334,7 +334,7 @@ extension APIClient {
                 Task {
                     do {
                         let result: T = try await self.makeAsyncRequest(
-                            urlRequest: urlRequest, retryCount: 3)
+                            urlRequest: urlRequest, retryCount: self.retryHandler.numberOfRetries)
                         continuation.resume(returning: result)
                     } catch let error as NetworkError {
                         continuation.resume(throwing: error)
@@ -462,7 +462,7 @@ extension APIClient {
                             urlRequest: urlRequest, params: endpoint.params,
                             withName: withName, data: file,
                             progressCompletion: progressCompletion,
-                            retryCount: 3)
+                            retryCount: self.retryHandler.numberOfRetries)
                         continuation.resume(returning: result)
                     } catch let error as NetworkError {
                         continuation.resume(throwing: error)
