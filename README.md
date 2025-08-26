@@ -1,411 +1,450 @@
-# SRNetworkManager 🚀
+# SRNetworkManager
 
-**SRNetworkManager** is a **powerful** and **flexible networking layer** for Swift applications. It provides a **generic, protocol-oriented** approach to handling API requests, supporting both **Combine** and **async/await** paradigms. This package is designed to be **easy to use**, **highly customizable**, and **fully compatible** with **Swift 6** and the **Sendable protocol**.
+A comprehensive, thread-safe networking library for Swift applications with support for both Combine and async/await programming models.
 
----
+## Features
 
-![Platform](https://img.shields.io/badge/platform-iOS%20|%20tvOS%20|%20macOS-blue)
-![Swift](https://img.shields.io/badge/swift-6.0-orange)
-![License](https://img.shields.io/github/license/siamakrostami/SRNetworkManager)
-![Version](https://img.shields.io/github/v/tag/siamakrostami/SRNetworkManager?label=version)
+- **🔄 Dual Programming Models**: Support for both Combine and async/await
+- **🛡️ Thread Safety**: All operations are thread-safe with proper synchronization
+- **🔄 Retry Logic**: Configurable retry strategies for failed requests
+- **📤 Upload Support**: File upload with progress tracking
+- **🌊 Streaming**: Support for streaming responses
+- **📡 Network Monitoring**: Real-time network connectivity and VPN detection
+- **🔧 Error Handling**: Rich error types with proper mapping
+- **📝 Logging**: Comprehensive request/response logging with multiple levels
+- **🔐 Authentication**: Built-in support for various authentication methods
+- **📦 Parameter Encoding**: Support for JSON, URL-encoded, and multipart form data
 
-## 🎯 **Features**
+## Requirements
 
-- 🔗 **Generic API Client** for various types of network requests  
-- 🧩 **Protocol-Oriented Design** for easy customization and extensibility  
-- ⚡ **Support for Combine & async/await**  
-- 🛡️ **Robust Error Handling** with custom error types  
-- 🔄 **Retry Mechanism** for failed requests  
-- 📤 **File Upload Support** with progress tracking  
-- 🔧 **Flexible Parameter Encoding** (URL & JSON)  
-- 🧾 **Comprehensive Logging System**  
-- 📦 **MIME Type Detection** for file uploads  
-- 🔒 **Thread-Safe Design** with Sendable protocol support  
-- 🚀 **Swift 6 Compatibility**
+- iOS 13.0+
+- macOS 13.0+
+- tvOS 13.0+
+- watchOS 7.0+
+- Swift 5.9+
 
----
+## Installation
 
-## 📋 **Requirements**
+### Swift Package Manager
 
-- **iOS 13.0+ / macOS 10.15+**
-- **Swift 5.5+**
-- **Xcode 13.0+**
-
----
-
-## 📦 **Installation**
-
-### Swift Package Manager (SPM)
-
-Add the following to your `Package.swift` file:
+Add the following dependency to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/siamakrostami/SRNetworkManager.git", from: "1.0.0")
+    .package(url: "https://github.com/yourusername/SRNetworkManager.git", from: "1.0.0")
 ]
 ```
 
-Or use **Xcode**:
-1. Go to **File > Add Packages...**
-2. Search for:
-   ```
-   https://github.com/siamakrostami/SRNetworkManager.git
-   ```
-3. Select the latest version and add it to your project.
+Or add it directly in Xcode:
+1. File → Add Package Dependencies
+2. Enter the repository URL
+3. Select the version you want to use
 
----
+## Quick Start
 
-## 📚 **Usage**
-
-Below are examples of how to use **SRNetworkManager** for **network requests** as well as **network monitoring** and **VPN detection**.
-
-### 1. Network Requests
-
-#### Initializing APIClient
+### Basic Setup
 
 ```swift
-let client = APIClient() // Basic initialization with default settings
+import SRNetworkManager
 
-let client = APIClient(qos: .background) // Initialization with custom QoS (Quality of Service)
+// Create a client with default configuration
+let client = APIClient()
 
-let client = APIClient(logLevel: .verbose) // Initialization with custom log level
-
-let client = APIClient(qos: .userInitiated, logLevel: .standard) // With QoS + log level
-
-let client = APIClient(retryHandler: MyCustomRetryHandler()) // With a custom retry handler
-
-let client = APIClient(decoder: MyCustomDecoder()) // With a custom decoder
-```
-
-#### Defining an API Endpoint
-
-```swift
-struct UserAPI: NetworkRouter {
-    typealias Parameters = UserParameters
-    typealias QueryParameters = UserQueryParameters
-
+// Define your endpoint
+struct GetUsersEndpoint: NetworkRouter {
     var baseURLString: String { "https://api.example.com" }
-    var method: RequestMethod? { .get }
     var path: String { "/users" }
-    var headers: [String: String]? { 
-        HeaderHandler.shared
-            .addAcceptHeaders(type: .applicationJson)
-            .addContentTypeHeader(type: .applicationJson)
-            .build() 
-    }
-    var params: Parameters? { UserParameters(id: 123) }
-    var queryParams: QueryParameters? { UserQueryParameters(includeDetails: true) }
-}
-```
-
-Or using a repository-style approach:
-
-```swift
-public protocol SampleRepositoryProtocols: Sendable {
-    func getInvoice(documentID: String) -> AnyPublisher<SomeModel, NetworkError>
-    func getInvoice(documentID: String) async throws -> SomeModel
-    
-    func getReceipt(transactionId: String) -> AnyPublisher<SomeModel, NetworkError>
-    func getReceipt(transactionId: String) async throws -> SomeModel
+    var method: RequestMethod? { .get }
 }
 
-public final class SampleRepository: Sendable {
-    // MARK: Lifecycle
-
-    public init(client: APIClient) {
-        self.client = client
-    }
-
-    // MARK: Private
-
-    private let client: APIClient
-}
-
-extension SampleRepository {
-    enum Router: NetworkRouter {
-        case getInvoice(documentID: String)
-        case getReceipt(transactionId: String)
-
-        var path: String {
-            switch self {
-            case .getInvoice(let documentID):
-                return "your/path/\(documentID)"
-            case .getReceipt(let transactionId):
-                return "your/path/\(transactionId)"
+// Make a request
+client.request(GetUsersEndpoint())
+    .sink(
+        receiveCompletion: { completion in
+            if case .failure(let error) = completion {
+                print("Error: \(error)")
             }
+        },
+        receiveValue: { (users: [User]) in
+            print("Received \(users.count) users")
         }
-
-        var method: RequestMethod? {
-            switch self {
-            case .getInvoice:
-                return .get
-            case .getReceipt:
-                return .post
-            }
-        }
-
-        var headers: [String: String]? {
-            var handler = HeaderHandler.shared
-                .addAuthorizationHeader()
-                .addAcceptHeaders(type: .applicationJson)
-                .addDeviceId()
-            
-            switch self {
-            case .getInvoice:
-                break
-            case .getReceipt:
-                handler = handler.addContentTypeHeader(type: .applicationJson)
-            }
-            
-            return handler.build()
-        }
-        
-        var queryParams: SampleRepositoryQueryParamModel? {
-            switch self {
-            case .getInvoice(let trxId):
-                return SampleRepositoryQueryParamModel(trxId: trxId)
-            case .getReceipt(let transactionId):
-                return SampleRepositoryQueryParamModel(trxId: transactionId)
-            }
-        }
-        
-        var params: SampleRepositoryQueryParamModel? {
-            switch self {
-            case .getInvoice(let documentID):
-                return SampleRepositoryQueryParamModel(
-                    documentId: documentID,
-                    stepId: "Some Id",
-                    subStepId: "Some Id"
-                )
-            case .getReceipt:
-                return nil
-            }
-        }
-    }
-}
-
-extension SampleRepository: SampleRepositoryProtocols {
-    public func getInvoice(documentID: String) -> AnyPublisher<SomeModel, NetworkError> {
-        client.request(Router.getInvoice(documentID: documentID))
-    }
-    
-    public func getInvoice(documentID: String) async throws -> SomeModel {
-        try await client.asyncRequest(Router.getInvoice(documentID: documentID))
-    }
-    
-    public func getReceipt(transactionId: String) -> AnyPublisher<SomeModel, NetworkError> {
-        client.request(Router.getReceipt(transactionId: transactionId))
-    }
-    
-    public func getReceipt(transactionId: String) async throws -> SomeModel {
-        try await client.asyncRequest(Router.getReceipt(transactionId: transactionId))
-    }
-}
-
-public struct SampleRepositoryQueryParamModel: Codable, Sendable {
-    public init(documentId: String? = nil,
-                stepId: String? = nil,
-                subStepId: String? = nil,
-                trxId: String? = nil) {
-        self.documentId = documentId
-        self.stepId = stepId
-        self.subStepId = subStepId
-        self.trxId = trxId
-    }
-    
-    public let documentId: String?
-    public let stepId: String?
-    public let subStepId: String?
-    public let trxId: String?
-}
-```
-
-#### Making a Request (async/await) ⚡
-
-```swift
-Task {
-    do {
-        let userResponse: UserResponse = try await client.asyncRequest(UserAPI())
-        print("Received user: \(userResponse)")
-    } catch {
-        print("Request failed: \(error)")
-    }
-}
-```
-
-#### Making a Request (Combine) 🔗
-
-```swift
-let apiClient = APIClient()
-
-apiClient.request(UserAPI())
-    .sink(receiveCompletion: { [weak self] completion in
-        switch completion {
-        case .finished:
-            print("Request completed successfully")
-        case .failure(let error):
-            print("Request failed with error: \(error)")
-        }
-    }, receiveValue: { [weak self] (response: UserResponse) in
-        print("Received user: \(response)")
-    })
+    )
     .store(in: &cancellables)
 ```
 
-#### File Upload 📤
+### Async/Await Usage
 
 ```swift
-let apiClient = APIClient()
-
-let fileData = // ... your file data ...
-let endpoint = UploadAPI()
-
-apiClient.uploadRequest(endpoint, withName: "file", data: fileData) { [weak self] progress in
-    print("Upload progress: \(progress)")
+// Using async/await
+do {
+    let users: [User] = try await client.request(GetUsersEndpoint())
+    print("Received \(users.count) users")
+} catch {
+    print("Error: \(error)")
 }
-.sink(receiveCompletion: { [weak self] completion in
-    // Handle completion
-}, receiveValue: { [weak self] (response: UploadResponse) in
-    print("Upload completed: \(response)")
-})
+```
+
+## Core Components
+
+### APIClient
+
+The main client for making network requests.
+
+```swift
+let client = APIClient(
+    configuration: .default,
+    qos: .userInitiated,
+    logLevel: .standard,
+    decoder: JSONDecoder(),
+    retryHandler: DefaultRetryHandler(numberOfRetries: 3)
+)
+```
+
+### NetworkRouter
+
+Define your API endpoints with type safety.
+
+```swift
+struct CreateUserEndpoint: NetworkRouter {
+    struct Parameters: Codable {
+        let name: String
+        let email: String
+    }
+    
+    var baseURLString: String { "https://api.example.com" }
+    var path: String { "/users" }
+    var method: RequestMethod? { .post }
+    var params: Parameters? { parameters }
+    
+    private let parameters: Parameters
+    init(name: String, email: String) {
+        self.parameters = Parameters(name: name, email: email)
+    }
+}
+```
+
+### Network Monitoring
+
+Monitor network connectivity changes in real-time.
+
+```swift
+let monitor = NetworkMonitor()
+monitor.startMonitoring()
+
+monitor.status
+    .sink { connectivity in
+        switch connectivity {
+        case .disconnected:
+            print("Network disconnected")
+        case .connected(let networkType):
+            print("Connected via \(networkType)")
+        }
+    }
+    .store(in: &cancellables)
+```
+
+## Advanced Usage
+
+### File Upload with Progress
+
+```swift
+let endpoint = UploadEndpoint()
+let imageData = UIImage().jpegData(compressionQuality: 0.8)
+
+client.uploadRequest(endpoint, withName: "image", data: imageData) { progress in
+    print("Upload progress: \(Int(progress * 100))%")
+}
+.sink(
+    receiveCompletion: { completion in
+        print("Upload completed")
+    },
+    receiveValue: { (response: UploadResponse) in
+        print("Upload successful: \(response.url)")
+    }
+)
 .store(in: &cancellables)
 ```
 
----
-
-### 2. Network Monitoring
-
-**SRNetworkManager** provides a simple utility to monitor network status via **NWPathMonitor**, exposing:
-
-- A **Combine publisher** for real-time updates  
-- An **async/await** stream if you prefer Swift concurrency  
-- **VPN detection** integrated by default (but can be bypassed)
-
-Here’s a sample usage:
+### Streaming Responses
 
 ```swift
-import Combine
-
-var cancellables = Set<AnyCancellable>()
-
-// Instantiate the network monitor (optionally disabling VPN detection)
-let network = NetworkMonitor(shouldDetectVpnAutomatically: true)
-
-// Start monitoring
-network.startMonitoring()
-
-// 1) Combine subscription
-network.status
-    .sink { [weak self] status in
-        switch status {
-        case .disconnected:
-            debugPrint("disconnected")
-        case .connected(let networkType):
-            switch networkType {
-            case .wifi:
-                debugPrint("wifi")
-            case .cellular:
-                debugPrint("cellular")
-            case .ethernet:
-                debugPrint("ethernet")
-            case .other:
-                debugPrint("other")
-            case .vpn:
-                debugPrint("vpn")
-            }
+client.streamRequest(StreamingEndpoint())
+    .sink(
+        receiveCompletion: { completion in
+            print("Stream completed")
+        },
+        receiveValue: { (chunk: DataChunk) in
+            print("Received chunk: \(chunk)")
         }
-    }
+    )
     .store(in: &cancellables)
-
-// 2) Async Stream
-Task {
-    let statusStream = network.statusStream()
-    for await status in statusStream {
-        switch status {
-        case .disconnected:
-            debugPrint("Async disconnected")
-        case .connected(let type):
-            debugPrint("Async connected: \(type)")
-        }
-    }
-}
 ```
 
----
-
-### 3. VPN Checking
-
-**SRNetworkManager** includes a standalone `VPNChecker` class that checks whether a VPN is active. It inspects the system’s proxy settings for known VPN interfaces. You can use this independently if you wish:
-
-```swift
-let checker = VPNChecker() // Normal usage
-let isVPNActive = checker.isVPNActive()
-print("VPN Active? \(isVPNActive)")
-```
-
-If you want to **bypass** VPN checking (e.g., in debug mode), you can initialize with:
-
-```swift
-let checker = VPNChecker(shouldBypassVpnCheck: true)
-```
-
-This will always return `false` for `isVPNActive()`.
-
----
-
-## 🔧 **Customization**
-
-### Retry Handling 🔄
+### Custom Retry Logic
 
 ```swift
 struct CustomRetryHandler: RetryHandler {
-    // MARK: Lifecycle
-
-    init(numberOfRetries: Int) {
-        self.numberOfRetries = numberOfRetries
-    }
-
-    // MARK: Public
-
     let numberOfRetries: Int
-
+    
     func shouldRetry(request: URLRequest, error: NetworkError) -> Bool {
-        // Implement your logic here
+        switch error {
+        case .urlError(let urlError):
+            return urlError.code == .notConnectedToInternet ||
+                   urlError.code == .timedOut
+        case .customError(let statusCode, _):
+            return statusCode >= 500
+        default:
+            return false
+        }
     }
-
+    
     func modifyRequestForRetry(client: APIClient, request: URLRequest, error: NetworkError) -> (URLRequest, NetworkError?) {
-        // Implement your logic here
+        var newRequest = request
+        newRequest.setValue("retry", forHTTPHeaderField: "X-Retry-Attempt")
+        return (newRequest, nil)
+    }
+    
+    // Implement async methods...
+}
+
+let client = APIClient(retryHandler: CustomRetryHandler(numberOfRetries: 3))
+```
+
+### Authentication
+
+```swift
+// Bearer token authentication
+let headers = HeaderHandler.shared
+    .addAuthorizationHeader(type: .bearer(token: "your-token"))
+    .addAcceptHeaders(type: .applicationJson)
+    .build()
+
+struct AuthenticatedEndpoint: NetworkRouter {
+    var baseURLString: String { "https://api.example.com" }
+    var path: String { "/protected" }
+    var method: RequestMethod? { .get }
+    var headers: [String: String]? { headers }
+}
+```
+
+### Network-Aware Operations
+
+```swift
+class NetworkAwareService {
+    private let client = APIClient()
+    private let monitor = NetworkMonitor()
+    private var pendingRequests: [() -> Void] = []
+    
+    init() {
+        monitor.startMonitoring()
+        setupNetworkHandling()
+    }
+    
+    private func setupNetworkHandling() {
+        monitor.status
+            .sink { [weak self] connectivity in
+                if case .connected = connectivity {
+                    self?.processPendingRequests()
+                }
+            }
+            .store(in: &cancellables)
+    }
+    
+    func makeRequest<T: Codable>(_ endpoint: NetworkRouter) -> AnyPublisher<T, NetworkError> {
+        if case .connected = monitor.currentStatus {
+            return client.request(endpoint)
+        } else {
+            return Future { promise in
+                self.pendingRequests.append {
+                    self.client.request(endpoint)
+                        .sink(receiveCompletion: { promise($0) }, receiveValue: { promise(.success($0)) })
+                        .store(in: &self.cancellables)
+                }
+            }
+            .eraseToAnyPublisher()
+        }
     }
 }
 ```
 
----
+## Configuration
 
-## 📱 **Sample SwiftUI App**
+### Log Levels
 
-A sample SwiftUI app is available to help you get started with **SRNetworkManager** in a real-world scenario.
+```swift
+let client = APIClient(logLevel: .verbose) // .none, .minimal, .standard, .verbose
+```
 
-**Features of the Sample App**:
-- Setup and usage of `APIClient`
-- Defining API endpoints using `NetworkRouter`
-- Making network requests and handling responses in SwiftUI
-- Basic error handling
+### Custom Headers
 
-**Getting the Sample App**:
-1. Clone this repository.
-2. Navigate to `Example/SRNetworkManagerExampleApp`.
-3. Open `SRNetworkManagerExampleApp.xcodeproj` in Xcode.
-4. Run the project.
+```swift
+let headers = HeaderHandler.shared
+    .addContentTypeHeader(type: .applicationJson)
+    .addAcceptHeaders(type: .applicationJson)
+    .addAcceptLanguageHeaders(type: .en)
+    .addAcceptEncodingHeaders(type: .gzip)
+    .addCustomHeader(name: "X-API-Key", value: "your-api-key")
+    .build()
+```
 
----
+### VPN Detection
 
-## 🤝 **Contributing**
+```swift
+let vpnChecker = VPNChecker()
+if vpnChecker.isVPNActive() {
+    print("VPN is connected")
+    // Handle VPN-specific logic
+}
+```
 
-We welcome contributions! Feel free to open issues and submit pull requests on [GitHub](https://github.com/siamakrostami/SRNetworkManager).
+## Error Handling
 
----
+The library provides comprehensive error handling with specific error types:
 
-## 📄 **License**
+```swift
+switch networkError {
+case .urlError(let urlError):
+    print("Network error: \(urlError.localizedDescription)")
+case .decodingError(let decodingError):
+    print("Decoding error: \(decodingError)")
+case .customError(let statusCode, let data):
+    print("Server error: \(statusCode)")
+case .responseError(let error):
+    print("Response error: \(error)")
+case .unknown:
+    print("Unknown error occurred")
+}
+```
 
-**SRNetworkManager** is available under the **MIT license**. See the [LICENSE](LICENSE) file for more details.
+## Thread Safety
+
+All operations in SRNetworkManager are thread-safe:
+
+- **APIClient**: Uses dedicated dispatch queues for synchronization
+- **NetworkMonitor**: Thread-safe status updates and continuation management
+- **HeaderHandler**: Synchronized header operations
+- **UploadProgressDelegate**: Thread-safe progress handling
+
+## Performance Considerations
+
+- **Efficient Monitoring**: Uses system-level network monitoring
+- **Minimal Overhead**: Low CPU and memory usage
+- **Background Operation**: Can operate in background queues
+- **Battery Impact**: Minimal battery impact from monitoring
+
+## Best Practices
+
+### Production Configuration
+
+```swift
+#if DEBUG
+let logLevel: LogLevel = .verbose
+let retryHandler = DefaultRetryHandler(numberOfRetries: 3)
+#else
+let logLevel: LogLevel = .none
+let retryHandler = DefaultRetryHandler(numberOfRetries: 1)
+#endif
+
+let client = APIClient(
+    logLevel: logLevel,
+    retryHandler: retryHandler
+)
+```
+
+### Error Handling
+
+```swift
+client.request(endpoint)
+    .sink(
+        receiveCompletion: { completion in
+            if case .failure(let error) = completion {
+                switch error {
+                case .urlError(let urlError):
+                    if urlError.code == .notConnectedToInternet {
+                        showOfflineMessage()
+                    }
+                case .customError(let statusCode, _):
+                    if statusCode == 401 {
+                        handleUnauthorized()
+                    }
+                default:
+                    showGenericError()
+                }
+            }
+        },
+        receiveValue: { response in
+            handleSuccess(response)
+        }
+    )
+    .store(in: &cancellables)
+```
+
+### Memory Management
+
+```swift
+class NetworkService {
+    private var cancellables = Set<AnyCancellable>()
+    private let client = APIClient()
+    
+    func makeRequest() {
+        client.request(endpoint)
+            .sink(receiveCompletion: { ... }, receiveValue: { ... })
+            .store(in: &cancellables) // Store to prevent cancellation
+    }
+}
+```
+
+## API Reference
+
+### Core Types
+
+- `APIClient`: Main client for network requests
+- `NetworkRouter`: Protocol for defining API endpoints
+- `NetworkError`: Comprehensive error types
+- `RetryHandler`: Protocol for custom retry logic
+- `NetworkMonitor`: Real-time network monitoring
+- `VPNChecker`: VPN connection detection
+
+### Request Methods
+
+- `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `TRACE`
+
+### Network Types
+
+- `wifi`, `cellular`, `ethernet`, `vpn`, `other`
+
+### Log Levels
+
+- `none`, `minimal`, `standard`, `verbose`
+
+### Content Types
+
+- `applicationJson`, `urlEncoded`, `formData`
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests for new functionality
+5. Ensure all tests pass
+6. Submit a pull request
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Support
+
+If you encounter any issues or have questions, please:
+
+1. Check the [documentation](docs/)
+2. Search existing [issues](https://github.com/yourusername/SRNetworkManager/issues)
+3. Create a new issue with detailed information
+
+## Acknowledgments
+
+- Built with Apple's Network framework
+- Inspired by modern networking patterns
+- Designed for performance and reliability
 

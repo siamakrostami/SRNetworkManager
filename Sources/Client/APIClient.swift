@@ -3,9 +3,96 @@ import Foundation
 
 // MARK: - APIClient
 
-/// A generic client for handling API requests with both Combine and async/await support.
-public final class APIClient: @unchecked
-    Sendable
+/// A comprehensive, thread-safe API client for handling network requests with support for
+/// both Combine and async/await programming models.
+///
+/// ## Overview
+/// `APIClient` is the core component of SRNetworkManager that provides a unified interface
+/// for making HTTP requests, handling responses, managing uploads, and implementing retry logic.
+/// It's designed to be thread-safe and can handle concurrent requests efficiently.
+///
+/// ## Key Features
+/// - **Dual Programming Models**: Support for both Combine and async/await
+/// - **Thread Safety**: All operations are thread-safe with proper synchronization
+/// - **Retry Logic**: Configurable retry strategies for failed requests
+/// - **Upload Support**: File upload with progress tracking
+/// - **Streaming**: Support for streaming responses
+/// - **Logging**: Comprehensive request/response logging
+/// - **Error Handling**: Rich error types with proper mapping
+/// - **Session Management**: Automatic session lifecycle management
+///
+/// ## Thread Safety
+/// The client uses a dedicated dispatch queue (`apiQueue`) for all operations to ensure
+/// thread safety. All properties are accessed through thread-safe getters and setters,
+/// and operations that modify shared state use barrier flags for proper synchronization.
+///
+/// ## Usage Examples
+///
+/// ### Basic Configuration
+/// ```swift
+/// let client = APIClient(
+///     configuration: .default,
+///     qos: .userInitiated,
+///     logLevel: .verbose,
+///     decoder: JSONDecoder(),
+///     retryHandler: DefaultRetryHandler(numberOfRetries: 3)
+/// )
+/// ```
+///
+/// ### Making Requests
+/// ```swift
+/// // Combine
+/// client.request(endpoint)
+///     .sink(receiveCompletion: { ... }, receiveValue: { ... })
+///     .store(in: &cancellables)
+///
+/// // Async/await
+/// let response = try await client.request(endpoint)
+/// ```
+///
+/// ### File Upload
+/// ```swift
+/// client.uploadRequest(endpoint, withName: "file", data: fileData) { progress in
+///     print("Upload progress: \(progress)")
+/// }
+/// .sink(receiveCompletion: { ... }, receiveValue: { ... })
+/// .store(in: &cancellables)
+/// ```
+///
+/// ### Streaming
+/// ```swift
+/// client.streamRequest(endpoint)
+///     .sink(receiveCompletion: { ... }, receiveValue: { chunk in
+///         // Handle each chunk
+///     })
+///     .store(in: &cancellables)
+/// ```
+///
+/// ## Error Handling
+/// The client provides comprehensive error handling with automatic mapping of:
+/// - Network errors (URLError)
+/// - Decoding errors (DecodingError)
+/// - Custom server errors
+/// - Response errors
+///
+/// ## Retry Logic
+/// Failed requests can be automatically retried based on configurable strategies:
+/// - Number of retries
+/// - Retry conditions
+/// - Request modification for retries
+///
+/// ## Logging
+/// Request and response logging can be configured with different levels:
+/// - `.none`: No logging
+/// - `.basic`: Basic request/response info
+/// - `.verbose`: Detailed logging with headers and body
+///
+/// ## Session Management
+/// The client automatically manages URLSession instances and provides methods to:
+/// - Track active sessions
+/// - Cancel all ongoing requests
+/// - Invalidate sessions properly
+public final class APIClient: @unchecked Sendable
 {
     // MARK: Lifecycle
 
