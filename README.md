@@ -434,14 +434,6 @@ class NetworkService {
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## Support
-
-If you encounter any issues or have questions, please:
-
-1. Check the [documentation](docs/)
-2. Search existing [issues](https://github.com/yourusername/SRNetworkManager/issues)
-3. Create a new issue with detailed information
-
 ## Acknowledgments
 
 - Built with Apple's Network framework
