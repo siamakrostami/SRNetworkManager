@@ -3,6 +3,8 @@ import Foundation
 
 // MARK: - APIClient
 
+
+
 /// A comprehensive, thread-safe API client for handling network requests with support for
 /// both Combine and async/await programming models.
 ///
@@ -100,20 +102,29 @@ public final class APIClient: @unchecked Sendable
 
     /// Initializes a new APIClient instance.
     /// - Parameters:
-    ///   - qos: The quality of service for the API queue. Default is .background.
-    ///   - logLevel: The initial log level for request/response logging. Default is .none.
+    ///   - configuration: An optional `URLSessionConfiguration` to use for sessions. Pass `nil` to use a default configuration.
+    ///   - configurationDelegate: An optional `URLSessionDelegate` used when creating sessions.
+    ///   - qos: The quality of service for the API queue. Default is `.background`.
+    ///   - logLevel: The initial log level for request/response logging. Default is `.none`.
+    ///   - defaultCacheStrategy: The default cache strategy applied to requests when no explicit policy is provided. Default is `.useProtocolCachePolicy`.
+    ///   - decoder: The JSONDecoder used for decoding responses. Defaults to a new `JSONDecoder()`.
+    ///   - retryHandler: The retry handler controlling retry behavior. Defaults to `DefaultRetryHandler(numberOfRetries: 0)`.
     public init(
         configuration: URLSessionConfiguration? = nil,
+        configurationDelegate: URLSessionDelegate? = nil,
         qos: DispatchQoS = .background,
         logLevel: LogLevel = .none,
+        defaultCacheStrategy: CacheStrategy = .useProtocolCachePolicy,
         decoder: JSONDecoder? = nil,
         retryHandler: RetryHandler? = nil
     ) {
         self._logLevel = logLevel
+        self._defaultCacheStrategy = defaultCacheStrategy
         self.apiQueue = DispatchQueue(label: "com.apiQueue", qos: qos)
         self._decoder = decoder ?? JSONDecoder()
         self._retryHandler = retryHandler ?? DefaultRetryHandler(numberOfRetries: 0)
         self._configuration = configuration
+        self._configurationDelegate = configurationDelegate
         self._requestsToRetry = []
         self._activeSessions = Set()
     }
@@ -134,74 +145,110 @@ public final class APIClient: @unchecked Sendable
            set { apiQueue.sync { _logLevel = newValue } }
        }
        
-       private var _configuration: URLSessionConfiguration?
+    /// Backing storage for the session configuration used to build new URLSession instances.
+    /// - Note: Access this via the thread-safe `configuration` computed property. Use
+    ///   `updateConfiguration(_:delegate:)` to change it at runtime.
+    private var _configuration: URLSessionConfiguration?
+    
+    /// Backing storage for the URLSession delegate used when creating sessions.
+    /// - Note: Access this via the thread-safe `configurationDelegate` computed property.
+    private var _configurationDelegate: URLSessionDelegate?
        
-       /// Thread-safe access to configuration
-       private var configuration: URLSessionConfiguration? {
-           get { return apiQueue.sync { _configuration } }
-           set { apiQueue.sync { _configuration = newValue } }
-       }
+    /// Thread-safe access to the current URLSessionConfiguration used when building
+    /// new sessions. If `nil`, a default configuration is used.
+    private var configuration: URLSessionConfiguration? {
+        get { return apiQueue.sync { _configuration } }
+        set { apiQueue.sync { _configuration = newValue } }
+    }
+    
+    /// Thread-safe access to the current URLSessionDelegate used for newly created sessions.
+    private var configurationDelegate: URLSessionDelegate? {
+        get { return apiQueue.sync { _configurationDelegate } }
+        set { apiQueue.sync { _configurationDelegate = newValue } }
+    }
        
-       /// Retry handler for failed requests
-       private var _retryHandler: RetryHandler?
+    /// Backing storage for the retry handler which determines retry policy and request
+    /// mutation across failures.
+    private var _retryHandler: RetryHandler?
        
-       /// Thread-safe access to the retry handler
-       private var retryHandler: RetryHandler {
-           get { return apiQueue.sync { _retryHandler ?? DefaultRetryHandler(numberOfRetries: 0) } }
-           set { apiQueue.sync { _retryHandler = newValue } }
-       }
+    /// Thread-safe access to the retry handler. Defaults to `DefaultRetryHandler(numberOfRetries: 0)`
+    /// when not explicitly provided.
+    private var retryHandler: RetryHandler {
+        get { return apiQueue.sync { _retryHandler ?? DefaultRetryHandler(numberOfRetries: 0) } }
+        set { apiQueue.sync { _retryHandler = newValue } }
+    }
        
-       /// Array to store requests that are to be retried
-       private var _requestsToRetry: [URLRequest]
+    /// Backing storage for requests queued for retry. Access only through thread-safe helpers.
+    private var _requestsToRetry: [URLRequest]
        
-       /// Thread-safe access to requests to retry
-       private var requestsToRetry: [URLRequest] {
-           get { return apiQueue.sync { _requestsToRetry } }
-           set { apiQueue.sync(flags: .barrier) { _requestsToRetry = newValue } }
-       }
+    /// Thread-safe access to the queue of requests pending retry.
+    private var requestsToRetry: [URLRequest] {
+        get { return apiQueue.sync { _requestsToRetry } }
+        set { apiQueue.sync(flags: .barrier) { _requestsToRetry = newValue } }
+    }
        
-       /// Thread-safe method to append a request to retry
-       private func appendRequestToRetry(_ request: URLRequest) {
-           apiQueue.sync(flags: .barrier) {
-               _requestsToRetry.append(request)
-           }
-       }
+    /// Appends a request to the retry queue in a thread-safe manner.
+    private func appendRequestToRetry(_ request: URLRequest) {
+        apiQueue.sync(flags: .barrier) {
+            _requestsToRetry.append(request)
+        }
+    }
        
-       /// Thread-safe method to clear requests to retry
-       private func clearRequestsToRetry() {
-           apiQueue.sync(flags: .barrier) {
-               _requestsToRetry.removeAll()
-           }
-       }
+    /// Clears all requests from the retry queue in a thread-safe manner.
+    private func clearRequestsToRetry() {
+        apiQueue.sync(flags: .barrier) {
+            _requestsToRetry.removeAll()
+        }
+    }
        
-       private var _decoder: JSONDecoder
+    /// Backing storage for the JSON decoder used for response decoding.
+    private var _decoder: JSONDecoder
        
-       /// Thread-safe access to decoder
-       private var decoder: JSONDecoder {
-           get { return apiQueue.sync { _decoder } }
-           set { apiQueue.sync { _decoder = newValue } }
-       }
+    /// Thread-safe access to the JSON decoder used for decoding server responses.
+    private var decoder: JSONDecoder {
+        get { return apiQueue.sync { _decoder } }
+        set { apiQueue.sync { _decoder = newValue } }
+    }
        
-       private var _activeSessions: Set<URLSession>
+    /// Backing storage for currently active URLSession instances managed by the client.
+    private var _activeSessions: Set<URLSession>
        
-       /// Thread-safe access to active sessions
-       private var activeSessions: Set<URLSession> {
-           get { return apiQueue.sync { _activeSessions } }
-           set { apiQueue.sync(flags: .barrier) { _activeSessions = newValue } }
-       }
+    /// Thread-safe access to the set of active URLSession instances.
+    private var activeSessions: Set<URLSession> {
+        get { return apiQueue.sync { _activeSessions } }
+        set { apiQueue.sync(flags: .barrier) { _activeSessions = newValue } }
+    }
        
-       /// Thread-safe method to add a session
-       private func addSession(_ session: URLSession) {
-           apiQueue.async {
-               self._activeSessions.insert(session)
-           }
-       }
+    /// Tracks a newly created session in a thread-safe manner.
+    private func addSession(_ session: URLSession) {
+        apiQueue.async {
+            self._activeSessions.insert(session)
+        }
+    }
        
-       /// Thread-safe method to remove a session
+    /// Removes a session from tracking in a thread-safe manner.
     private func removeSession(_ session: URLSession) {
         apiQueue.async {
             self._activeSessions.remove(session)
         }
+    }
+    
+    /// Backing storage for the default cache strategy applied to requests that do not specify a policy.
+    private var _defaultCacheStrategy: CacheStrategy = .useProtocolCachePolicy
+
+    /// Backing storage for the shared URLCache configuration applied to newly created sessions.
+    private var _cacheConfiguration: CacheConfiguration?
+
+    /// Thread-safe access to the default cache strategy.
+    private var defaultCacheStrategy: CacheStrategy {
+        get { return apiQueue.sync { _defaultCacheStrategy } }
+        set { apiQueue.sync { _defaultCacheStrategy = newValue } }
+    }
+
+    /// Thread-safe access to the cache configuration used to build a URLCache for new sessions.
+    private var cacheConfiguration: CacheConfiguration? {
+        get { return apiQueue.sync { _cacheConfiguration } }
+        set { apiQueue.sync { _cacheConfiguration = newValue } }
     }
 }
 
@@ -213,7 +260,7 @@ extension APIClient {
     /// Performs a network request using Combine.
     /// - Parameter endpoint: The NetworkRouter defining the request.
     /// - Returns: A publisher that emits the decoded response or an error.
-    public func request<T: Codable>(_ endpoint: any NetworkRouter)
+    public func request<T: Codable & Sendable>(_ endpoint: any NetworkRouter)
         -> AnyPublisher<T, NetworkError>
     {
         guard let urlRequest = try? endpoint.asURLRequest() else {
@@ -224,12 +271,12 @@ extension APIClient {
     }
 
     /// Internal method to make the actual network request.
-    private func makeRequest<T: Codable>(
+    private func makeRequest<T: Codable & Sendable>(
         urlRequest: URLRequest, retryCount: Int
     ) -> AnyPublisher<T, NetworkError> {
         URLSessionLogger.shared.logRequest(urlRequest, logLevel: logLevel)
         
-        let session = configuredSession(configuration: configuration)
+        let session = configuredSession(delegate: configurationDelegate, configuration: configuration)
         
         return session.dataTaskPublisher(for: urlRequest)
             .subscribe(on: apiQueue)
@@ -269,7 +316,7 @@ extension APIClient {
     }
 
     /// Handles retry logic for failed requests.
-    private func handleRetry<T: Codable>(
+    private func handleRetry<T: Codable & Sendable>(
         urlRequest: URLRequest, retryCount: Int, error: NetworkError
     ) -> AnyPublisher<T, NetworkError> {
         if retryCount > 0 && retryHandler.shouldRetry(request: urlRequest, error: error) {
@@ -306,7 +353,7 @@ extension APIClient {
     ///   - data: The file data to be uploaded.
     ///   - progressCompletion: A closure to handle upload progress updates.
     /// - Returns: A publisher that emits the decoded response or an error.
-    public func uploadRequest<T: Codable>(
+    public func uploadRequest<T: Codable & Sendable>(
         _ endpoint: any NetworkRouter, withName: String, data: Data?,
         progressCompletion: @escaping ProgressHandler
     ) -> AnyPublisher<T, NetworkError> {
@@ -325,7 +372,7 @@ extension APIClient {
     }
 
     /// Internal method to make the actual upload request.
-    private func makeUploadRequest<T: Codable>(
+    private func makeUploadRequest<T: Codable & Sendable>(
         urlRequest: URLRequest, params: Codable?, withName: String, data: Data,
         progressCompletion: @escaping ProgressHandler, retryCount: Int
     ) -> AnyPublisher<T, NetworkError> {
@@ -343,7 +390,7 @@ extension APIClient {
             let progressDelegate = UploadProgressDelegate()
             progressDelegate.progressHandler = progressCompletion
             let session = self.configuredSession(
-                delegate: progressDelegate, configuration: self.configuration)
+                delegate: configurationDelegate == nil ? progressDelegate : configurationDelegate, configuration: self.configuration)
 
             let task = session.uploadTask(with: newUrlRequest, from: bodyData) {
                 data, response, error in
@@ -404,7 +451,7 @@ extension APIClient {
     /// - Parameter endpoint: The NetworkRouter defining the request.
     /// - Returns: The decoded response.
     /// - Throws: A NetworkError if the request fails.
-    public func request<T: Codable>(_ endpoint: any NetworkRouter)
+    public func request<T: Codable & Sendable>(_ endpoint: any NetworkRouter)
         async throws -> T
     {
         guard let urlRequest = try? endpoint.asURLRequest() else {
@@ -435,12 +482,12 @@ extension APIClient {
     }
 
     /// Internal method to make the actual async network request.
-    private func makeAsyncRequest<T: Codable>(
+    private func makeAsyncRequest<T: Codable & Sendable>(
         urlRequest: URLRequest, retryCount: Int
     ) async throws -> T {
         URLSessionLogger.shared.logRequest(urlRequest, logLevel: logLevel)
 
-        let session = configuredSession(configuration: configuration)
+        let session = configuredSession(delegate: configurationDelegate,configuration: configuration)
 
         do {
             let (data, response) = try await session.data(for: urlRequest)
@@ -472,7 +519,7 @@ extension APIClient {
     }
 
     /// Handles retry logic for failed async requests.
-    private func handleAsyncRetry<T: Codable>(
+    private func handleAsyncRetry<T: Codable & Sendable>(
         urlRequest: URLRequest, retryCount: Int, error: Error
     ) async throws -> T {
         let networkError = error as? NetworkError ?? mapErrorToNetworkError(error)
@@ -527,7 +574,7 @@ extension APIClient {
     ///   - progressCompletion: A closure to handle upload progress updates.
     /// - Returns: The decoded response.
     /// - Throws: A NetworkError if the request fails.
-    public func uploadRequest<T: Codable>(
+    public func uploadRequest<T: Codable & Sendable>(
         _ endpoint: any NetworkRouter, withName: String, data: Data?,
         progressCompletion: @escaping ProgressHandler
     ) async throws -> T {
@@ -563,7 +610,7 @@ extension APIClient {
     }
 
     /// Internal method to make the actual async upload request.
-    private func makeAsyncUploadRequest<T: Codable>(
+    private func makeAsyncUploadRequest<T: Codable & Sendable>(
         urlRequest: URLRequest, params: Codable?, withName: String, data: Data,
         progressCompletion: @escaping ProgressHandler, retryCount: Int
     ) async throws -> T {
@@ -574,8 +621,8 @@ extension APIClient {
 
         let progressDelegate = UploadProgressDelegate()
         progressDelegate.progressHandler = progressCompletion
-        let session = configuredSession(
-            delegate: progressDelegate, configuration: configuration)
+        let session = self.configuredSession(
+            delegate: configurationDelegate == nil ? progressDelegate : configurationDelegate, configuration: self.configuration)
 
         do {
             let (data, response) = try await session.upload(
@@ -633,7 +680,7 @@ extension APIClient {
         let sessionDelegate = StreamingSessionDelegate<T>()
         sessionDelegate.logLevel = logLevel
         let session = configuredSession(
-            delegate: sessionDelegate, configuration: configuration)
+            delegate: configurationDelegate == nil ? sessionDelegate: configurationDelegate, configuration: configuration)
 
         sessionDelegate.startRequest(session: session, urlRequest: urlRequest)
 
@@ -792,7 +839,7 @@ extension APIClient {
                 return
             }
 
-            let session = self.configuredSession(
+            let session = self.configuredSession(delegate: configurationDelegate,
                 configuration: self.configuration)
 
             let task = Task {
@@ -860,7 +907,56 @@ extension APIClient {
 extension APIClient {
     // MARK: - Helper Methods
 
-    /// Configures and returns a URLSession.
+    /// Updates the client's URLSession configuration and optional delegate in a thread-safe manner.
+    /// - Parameters:
+    ///   - configuration: The new URLSessionConfiguration to apply. Pass `nil` to revert to default.
+    ///   - delegate: An optional URLSessionDelegate to use for newly created sessions.
+    ///   - invalidateExistingSessions: If true, invalidates and clears currently active sessions so
+    ///     future requests use the new configuration immediately. Defaults to `true`.
+    public func updateConfiguration(
+        _ configuration: URLSessionConfiguration?,
+        delegate: URLSessionDelegate? = nil,
+        invalidateExistingSessions: Bool = true
+    ) {
+        apiQueue.sync(flags: .barrier) {
+            self._configuration = configuration
+            if let delegate = delegate {
+                self._configurationDelegate = delegate
+            }
+
+            if invalidateExistingSessions {
+                let sessions = self._activeSessions
+                sessions.forEach { $0.invalidateAndCancel() }
+                self._activeSessions.removeAll()
+            }
+        }
+    }
+    
+    /// Updates the default cache strategy used for requests that don't specify a cache policy.
+    /// - Parameter strategy: The new cache strategy to apply.
+    public func updateDefaultCacheStrategy(_ strategy: CacheStrategy) {
+        apiQueue.sync(flags: .barrier) {
+            self._defaultCacheStrategy = strategy
+        }
+    }
+
+    /// Updates the cache configuration. New sessions will install a URLCache built from this configuration.
+    /// - Parameters:
+    ///   - configuration: The cache configuration to use. Pass `nil` to remove a custom cache.
+    ///   - invalidateExistingSessions: If true, invalidates and clears active sessions so that new sessions pick up the cache change immediately. Defaults to `false`.
+    public func updateCacheConfiguration(_ configuration: CacheConfiguration?, invalidateExistingSessions: Bool = false) {
+        apiQueue.sync(flags: .barrier) {
+            self._cacheConfiguration = configuration
+            if invalidateExistingSessions {
+                let sessions = self._activeSessions
+                sessions.forEach { $0.invalidateAndCancel() }
+                self._activeSessions.removeAll()
+            }
+        }
+    }
+
+    /// Builds a URLSession using either the provided configuration/delegate or the client's
+    /// current configuration/delegate. Tracks the session for later cancellation.
     private func configuredSession(
         delegate: URLSessionDelegate? = nil,
         configuration: URLSessionConfiguration? = nil
@@ -869,8 +965,10 @@ extension APIClient {
             let configuration = URLSessionConfiguration.default
             configuration.timeoutIntervalForRequest = 120
             configuration.timeoutIntervalForResource = 120
-            configuration.requestCachePolicy =
-                .reloadIgnoringLocalAndRemoteCacheData
+            configuration.requestCachePolicy = defaultCacheStrategy.requestPolicy
+            if let cacheConfig = cacheConfiguration {
+                configuration.urlCache = cacheConfig.buildCache()
+            }
             return URLSession(
                 configuration: configuration, delegate: delegate,
                 delegateQueue: nil)
@@ -945,3 +1043,4 @@ extension APIClient {
         }
     }
 }
+
